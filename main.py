@@ -831,6 +831,8 @@ class DiscordBridge:
         self,
         discord_id: str,
         confirmed_amount: Decimal | None = None,
+        member: discord.Member | None = None,
+        allow_member_fetch: bool = True,
     ) -> dict[str, Any]:
         try:
             numeric_discord_id = int(discord_id)
@@ -840,17 +842,29 @@ class DiscordBridge:
             raise RuntimeError("ID do Discord inválido")
 
         guild = self._guild_on_bot_loop()
-        try:
-            member = await guild.fetch_member(numeric_discord_id)
-        except discord.NotFound:
+        if member is not None and member.guild.id != guild.id:
+            member = None
+        if member is None:
+            member = guild.get_member(numeric_discord_id)
+        if member is None and allow_member_fetch:
+            try:
+                member = await asyncio.wait_for(
+                    guild.fetch_member(numeric_discord_id),
+                    timeout=8,
+                )
+            except asyncio.TimeoutError as exc:
+                raise RuntimeError("Discord demorou ao consultar o membro") from exc
+            except discord.NotFound:
+                member = None
+            except discord.HTTPException as exc:
+                raise RuntimeError("Discord não respondeu ao consultar o membro") from exc
+        if member is None:
             return {
                 "discord_id": str(numeric_discord_id),
                 "is_member": False,
                 "confirmed_amount": confirmed_amount or Decimal("0"),
                 "tier": None,
             }
-        except discord.HTTPException as exc:
-            raise RuntimeError("Discord não respondeu ao consultar o membro") from exc
 
         amount = confirmed_amount
         if amount is None:
@@ -874,9 +888,17 @@ class DiscordBridge:
             has_role = role in member.roles
             try:
                 if should_have_role and not has_role:
-                    await member.add_roles(role, reason="Sincronização do ranking de depósitos confirmados")
+                    await asyncio.wait_for(
+                        member.add_roles(role, reason="Sincronização do ranking de depósitos confirmados"),
+                        timeout=8,
+                    )
                 elif not should_have_role and has_role:
-                    await member.remove_roles(role, reason="Atualização do ranking de depósitos confirmados")
+                    await asyncio.wait_for(
+                        member.remove_roles(role, reason="Atualização do ranking de depósitos confirmados"),
+                        timeout=8,
+                    )
+            except asyncio.TimeoutError as exc:
+                raise RuntimeError(f"Discord demorou ao alterar o cargo de depósito {role_id}") from exc
             except discord.Forbidden as exc:
                 raise RuntimeError(f"Discord recusou a alteração do cargo de depósito {role_id}") from exc
             except discord.HTTPException as exc:
@@ -891,7 +913,10 @@ class DiscordBridge:
         }
 
     async def _deposit_ranking_message(self, member: discord.Member) -> str:
-        result = await self._sync_deposit_roles_on_bot_loop(str(member.id))
+        result = await self._sync_deposit_roles_on_bot_loop(
+            str(member.id),
+            member=member,
+        )
         amount = result["confirmed_amount"]
         tier_name = result.get("tier")
         if tier_name:
@@ -917,17 +942,22 @@ class DiscordBridge:
 
     async def _reconcile_deposit_roles_loop(self) -> None:
         while True:
+            await asyncio.sleep(settings.deposit_role_sync_interval_seconds)
             try:
                 for discord_id, amount in await self._fetch_all_deposit_summaries():
                     try:
-                        await self._sync_deposit_roles_on_bot_loop(discord_id, amount)
+                        await self._sync_deposit_roles_on_bot_loop(
+                            discord_id,
+                            amount,
+                            allow_member_fetch=False,
+                        )
                     except (RuntimeError, httpx.HTTPError) as exc:
                         logger.warning("Não foi possível sincronizar o ranking de %s: %s", discord_id, exc)
+                    await asyncio.sleep(0)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("Falha na reconciliação do ranking de depósitos")
-            await asyncio.sleep(settings.deposit_role_sync_interval_seconds)
 
     def _register_commands(self) -> None:
         @self.bot.event

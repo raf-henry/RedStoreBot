@@ -53,6 +53,37 @@ Para receber uma DM quando um usuário clicar em “Já fiz o pagamento”, conf
 `DEPOSIT_NOTIFICATION_DISCORD_ID` com o ID Discord do administrador responsável
 por conferir os depósitos. A notificação informa o usuário e o valor solicitado.
 
+O comando `/ranking` (e `!ranking`) sincroniza automaticamente o cargo conforme o
+total de depósitos confirmados, seguindo esta progressão:
+
+| Cargo | A partir de | ID |
+| --- | ---: | --- |
+| Plebeu | R$ 1 | `1540196431875276820` |
+| Camponês | R$ 20 | `1540196669801635910` |
+| Artesão | R$ 50 | `1540196877193060372` |
+| Mercador | R$ 80 | `1540349040246525962` |
+| Nobre | R$ 120 | `1540348193076682802` |
+| Escudeiro | R$ 160 | `1540351414377779260` |
+| Cavaleiro | R$ 210 | `1540351342512705587` |
+| Barão | R$ 260 | `1540351462918463508` |
+| Visconde | R$ 320 | `1540353613145051187` |
+| Conde | R$ 380 | `1540353652827357264` |
+| Marquês | R$ 450 | `1540353694707744848` |
+| Duque | R$ 550 | `1540353747107188756` |
+| Grão-Duque | R$ 650 | `1540353832179990649` |
+| Príncipe | R$ 800 | `1540196429950091396` |
+| Rei | R$ 1.000 | `1540353925302059028` |
+| Arquiduque | R$ 1.250 | `1540353961863811184` |
+| Imperador | R$ 1.500 | `1540354008919703613` |
+| Soberano Imperial | R$ 2.000 | `1540354059830042625` |
+| Imperador Supremo | R$ 2.500 | `1540354059838431242` |
+| Lenda da Coroa | R$ 3.500 | `1540354156785700975` |
+| Monarca Eterno | R$ 5.000 | `1540354251199479839` |
+
+Os IDs podem ser sobrescritos no ambiente usando variáveis no formato
+`DEPOSIT_<NOME>_ROLE_ID` (sem acentos). As variáveis antigas dos cinco primeiros
+cargos continuam como fallback para não quebrar configurações existentes.
+
 ### Sistema de tickets
 
 Para ativar os tickets, configure no `.env` os IDs de `TICKET_CATEGORY_ID`,

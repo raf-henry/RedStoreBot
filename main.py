@@ -113,6 +113,15 @@ def format_robux(value: int) -> str:
     return f"{value:,}".replace(",", ".")
 
 
+def read_role_id(name: str, default: str, *legacy_names: str) -> int:
+    """Reads a role ID, keeping compatibility with the previous tier names."""
+    for env_name in (name, *legacy_names):
+        value = os.getenv(env_name)
+        if value is not None:
+            return int(value or 0)
+    return int(default)
+
+
 @dataclass(frozen=True)
 class Settings:
     environment: str = os.getenv("ENVIRONMENT", "development").lower()
@@ -154,14 +163,68 @@ class Settings:
     deliverer_role_id: int = int(os.getenv("DELIVERER_ROLE_ID", "0") or 0)
     deliverer_role_name: str = os.getenv("DELIVERER_ROLE_NAME", "Entregador")
     proof_channel_id: int = int(os.getenv("PROOF_CHANNEL_ID", "0") or 0)
-    deposit_bronze_role_id: int = int(
-        os.getenv("DEPOSIT_BRONZE_ROLE_ID", "1540196431875276820") or 0
+    deposit_plebeu_role_id: int = read_role_id(
+        "DEPOSIT_PLEBEU_ROLE_ID", "1540196431875276820", "DEPOSIT_BRONZE_ROLE_ID"
     )
-    deposit_prata_role_id: int = int(
-        os.getenv("DEPOSIT_PRATA_ROLE_ID", "1540196669801635910") or 0
+    deposit_campones_role_id: int = read_role_id(
+        "DEPOSIT_CAMPONES_ROLE_ID", "1540196669801635910", "DEPOSIT_PRATA_ROLE_ID"
     )
-    deposit_ouro_role_id: int = int(
-        os.getenv("DEPOSIT_OURO_ROLE_ID", "1540196877193060372") or 0
+    deposit_artesao_role_id: int = read_role_id(
+        "DEPOSIT_ARTESAO_ROLE_ID", "1540196877193060372", "DEPOSIT_OURO_ROLE_ID"
+    )
+    deposit_mercador_role_id: int = read_role_id(
+        "DEPOSIT_MERCADOR_ROLE_ID", "1540349040246525962", "DEPOSIT_ESMERALDA_ROLE_ID"
+    )
+    deposit_nobre_role_id: int = read_role_id(
+        "DEPOSIT_NOBRE_ROLE_ID", "1540348193076682802", "DEPOSIT_DIAMANTE_ROLE_ID"
+    )
+    deposit_escudeiro_role_id: int = read_role_id(
+        "DEPOSIT_ESCUDEIRO_ROLE_ID", "1540351414377779260"
+    )
+    deposit_cavaleiro_role_id: int = read_role_id(
+        "DEPOSIT_CAVALEIRO_ROLE_ID", "1540351342512705587"
+    )
+    deposit_barao_role_id: int = read_role_id(
+        "DEPOSIT_BARAO_ROLE_ID", "1540351462918463508"
+    )
+    deposit_visconde_role_id: int = read_role_id(
+        "DEPOSIT_VISCONDE_ROLE_ID", "1540353613145051187"
+    )
+    deposit_conde_role_id: int = read_role_id(
+        "DEPOSIT_CONDE_ROLE_ID", "1540353652827357264"
+    )
+    deposit_marques_role_id: int = read_role_id(
+        "DEPOSIT_MARQUES_ROLE_ID", "1540353694707744848"
+    )
+    deposit_duque_role_id: int = read_role_id(
+        "DEPOSIT_DUQUE_ROLE_ID", "1540353747107188756"
+    )
+    deposit_grao_duque_role_id: int = read_role_id(
+        "DEPOSIT_GRAO_DUQUE_ROLE_ID", "1540353832179990649"
+    )
+    deposit_principe_role_id: int = read_role_id(
+        "DEPOSIT_PRINCIPE_ROLE_ID", "1540196429950091396"
+    )
+    deposit_rei_role_id: int = read_role_id(
+        "DEPOSIT_REI_ROLE_ID", "1540353925302059028"
+    )
+    deposit_arquiduque_role_id: int = read_role_id(
+        "DEPOSIT_ARQUIDUQUE_ROLE_ID", "1540353961863811184"
+    )
+    deposit_imperador_role_id: int = read_role_id(
+        "DEPOSIT_IMPERADOR_ROLE_ID", "1540354008919703613"
+    )
+    deposit_soberano_imperial_role_id: int = read_role_id(
+        "DEPOSIT_SOBERANO_IMPERIAL_ROLE_ID", "1540354059830042625"
+    )
+    deposit_imperador_supremo_role_id: int = read_role_id(
+        "DEPOSIT_IMPERADOR_SUPREMO_ROLE_ID", "1540354059838431242"
+    )
+    deposit_lenda_da_coroa_role_id: int = read_role_id(
+        "DEPOSIT_LENDA_DA_COROA_ROLE_ID", "1540354156785700975"
+    )
+    deposit_monarca_eterno_role_id: int = read_role_id(
+        "DEPOSIT_MONARCA_ETERNO_ROLE_ID", "1540354251199479839"
     )
     deposit_role_sync_interval_seconds: int = max(
         60, int(os.getenv("DEPOSIT_ROLE_SYNC_INTERVAL_SECONDS", "300") or 300)
@@ -176,14 +239,36 @@ class Settings:
 settings = Settings()
 
 
+DEPOSIT_TIERS: tuple[tuple[str, Decimal, int], ...] = (
+    ("Plebeu", Decimal("1.00"), settings.deposit_plebeu_role_id),
+    ("Camponês", Decimal("20.00"), settings.deposit_campones_role_id),
+    ("Artesão", Decimal("50.00"), settings.deposit_artesao_role_id),
+    ("Mercador", Decimal("80.00"), settings.deposit_mercador_role_id),
+    ("Nobre", Decimal("120.00"), settings.deposit_nobre_role_id),
+    ("Escudeiro", Decimal("160.00"), settings.deposit_escudeiro_role_id),
+    ("Cavaleiro", Decimal("210.00"), settings.deposit_cavaleiro_role_id),
+    ("Barão", Decimal("260.00"), settings.deposit_barao_role_id),
+    ("Visconde", Decimal("320.00"), settings.deposit_visconde_role_id),
+    ("Conde", Decimal("380.00"), settings.deposit_conde_role_id),
+    ("Marquês", Decimal("450.00"), settings.deposit_marques_role_id),
+    ("Duque", Decimal("550.00"), settings.deposit_duque_role_id),
+    ("Grão-Duque", Decimal("650.00"), settings.deposit_grao_duque_role_id),
+    ("Príncipe", Decimal("800.00"), settings.deposit_principe_role_id),
+    ("Rei", Decimal("1000.00"), settings.deposit_rei_role_id),
+    ("Arquiduque", Decimal("1250.00"), settings.deposit_arquiduque_role_id),
+    ("Imperador", Decimal("1500.00"), settings.deposit_imperador_role_id),
+    ("Soberano Imperial", Decimal("2000.00"), settings.deposit_soberano_imperial_role_id),
+    ("Imperador Supremo", Decimal("2500.00"), settings.deposit_imperador_supremo_role_id),
+    ("Lenda da Coroa", Decimal("3500.00"), settings.deposit_lenda_da_coroa_role_id),
+    ("Monarca Eterno", Decimal("5000.00"), settings.deposit_monarca_eterno_role_id),
+)
+
+
 def deposit_tier_for_amount(amount: Decimal) -> tuple[str | None, Decimal | None, int | None]:
     """Returns the highest deposit tier reached by the confirmed total."""
-    if amount >= Decimal("50.00"):
-        return "Ouro", Decimal("50.00"), settings.deposit_ouro_role_id
-    if amount >= Decimal("30.00"):
-        return "Prata", Decimal("30.00"), settings.deposit_prata_role_id
-    if amount >= Decimal("1.00"):
-        return "Bronze", Decimal("1.00"), settings.deposit_bronze_role_id
+    for tier_name, minimum_amount, role_id in reversed(DEPOSIT_TIERS):
+        if amount >= minimum_amount:
+            return tier_name, minimum_amount, role_id
     return None, None, None
 
 
@@ -870,11 +955,7 @@ class DiscordBridge:
         if amount is None:
             amount = await self._fetch_confirmed_deposit_amount(str(numeric_discord_id))
         tier_name, _, target_role_id = deposit_tier_for_amount(amount)
-        configured_role_ids = (
-            settings.deposit_bronze_role_id,
-            settings.deposit_prata_role_id,
-            settings.deposit_ouro_role_id,
-        )
+        configured_role_ids = tuple(role_id for _, _, role_id in DEPOSIT_TIERS)
 
         for role_id in dict.fromkeys(role_id for role_id in configured_role_ids if role_id > 0):
             role = guild.get_role(role_id)
@@ -924,12 +1005,13 @@ class DiscordBridge:
         else:
             tier_text = "**Sem cargo**"
 
-        if amount < Decimal("1.00"):
-            next_text = f"Faltam {format_currency(Decimal('1.00') - amount, 'BRL')} para Bronze."
-        elif amount < Decimal("30.00"):
-            next_text = f"Faltam {format_currency(Decimal('30.00') - amount, 'BRL')} para Prata."
-        elif amount < Decimal("50.00"):
-            next_text = f"Faltam {format_currency(Decimal('50.00') - amount, 'BRL')} para Ouro."
+        for next_tier_name, next_minimum_amount, _ in DEPOSIT_TIERS:
+            if amount < next_minimum_amount:
+                next_text = (
+                    f"Faltam {format_currency(next_minimum_amount - amount, 'BRL')} "
+                    f"para {next_tier_name}."
+                )
+                break
         else:
             next_text = "Você alcançou o nível máximo."
 

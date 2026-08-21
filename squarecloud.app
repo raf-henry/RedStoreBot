@@ -1,5 +1,5 @@
 RUNTIME=python
-START=uvicorn main:app --host 0.0.0.0 --port $PORT
+START=python main.py
 MEMORY=512
 VERSION=recommended
 DISPLAY_NAME=redstore-discord-bridge

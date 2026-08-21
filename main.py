@@ -1078,7 +1078,6 @@ class DiscordBridge:
 
         display_name = "Usuário não encontrado"
         username = "indisponível"
-        avatar_url: str | None = None
         if profile is not None:
             display_name = (
                 getattr(profile, "display_name", None)
@@ -1086,15 +1085,11 @@ class DiscordBridge:
                 or profile.name
             )
             username = profile.name
-            avatar = getattr(profile, "display_avatar", None)
-            if avatar is not None:
-                avatar_url = str(avatar.url)
 
         return {
             "discord_id": str(numeric_discord_id),
             "display_name": display_name,
             "username": username,
-            "avatar_url": avatar_url,
             "deposit_role": self._current_deposit_role_name(member),
         }
 
@@ -1116,37 +1111,32 @@ class DiscordBridge:
             )
         )
 
-        embeds: list[discord.Embed] = []
+        ranking_lines: list[str] = []
         position = 0
         for (discord_id, amount), profile in zip(top_summaries, profiles):
             if profile is None:
                 continue
             position += 1
-            embed = discord.Embed(
-                title=f"#{position} — {profile['display_name']}",
-                color=discord.Color.gold() if position == 1 else discord.Color.blurple(),
+            medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(position, "🏅")
+            user_label = (
+                f"<@{discord_id}>"
+                if profile["username"] != "indisponível"
+                else profile["display_name"]
             )
-            if profile["avatar_url"]:
-                embed.set_thumbnail(url=profile["avatar_url"])
-            embed.add_field(
-                name="Nome (Discord)",
-                value=f"{profile['display_name']} (@{profile['username']})",
-                inline=False,
+            ranking_lines.append(
+                f"{medal} **#{position}** {user_label} — **{profile['deposit_role']}**\n"
+                f"💰 **{format_currency(amount, 'BRL')}**"
             )
-            embed.add_field(name="ID do Discord", value=f"`{discord_id}`", inline=True)
-            embed.add_field(
-                name="Cargo de depósito",
-                value=f"**{profile['deposit_role']}**",
-                inline=True,
+
+        if not ranking_lines:
+            return []
+        return [
+            discord.Embed(
+                title="🏆 Rank Geral — TOP 10 Compradores",
+                description="\n\n".join(ranking_lines),
+                color=discord.Color.gold(),
             )
-            embed.add_field(
-                name="Total gasto",
-                value=f"**{format_currency(amount, 'BRL')}**",
-                inline=True,
-            )
-            embed.set_footer(text="Ranking de depósitos • Top 10")
-            embeds.append(embed)
-        return embeds
+        ]
 
     async def _reconcile_deposit_roles_loop(self) -> None:
         while True:

@@ -55,8 +55,9 @@ por conferir os depósitos. A notificação informa o usuário e o valor solicit
 
 O comando `/rank` (e `!rank`) mostra os depósitos confirmados do usuário e
 sincroniza automaticamente seu cargo conforme a progressão abaixo. O comando
-`/ranking` (e `!ranking`) publica o top 10 de usuários com maior gasto, exibindo
-avatar, nome, ID do Discord, cargo de depósito atual e total gasto.
+`/ranking` (e `!ranking`) publica uma única mensagem com o top 10 de usuários com
+maior gasto, exibindo a menção do usuário, o cargo de depósito em texto e o total
+gasto, sem ID do Discord ou quantidade de compras.
 
 | Cargo | A partir de | ID |
 | --- | ---: | --- |

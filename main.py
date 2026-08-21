@@ -753,6 +753,7 @@ class DiscordBridge:
         self._proof_number_lock = asyncio.Lock()
         self._deposit_review_in_flight: set[int] = set()
         self._deposit_role_sync_task: asyncio.Task[None] | None = None
+        self._application_commands_synced = False
         self._ptax_cache: tuple[float, Decimal, Decimal, str] | None = None
         self._register_commands()
 
@@ -1162,6 +1163,16 @@ class DiscordBridge:
         async def on_ready() -> None:
             logger.info("Bot conectado como %s", self.bot.user)
             self._connected_guild_id = settings.discord_guild_id or None
+            if not self._application_commands_synced:
+                try:
+                    await self.bot.sync_commands(force=True)
+                    self._application_commands_synced = True
+                    logger.info(
+                        "Comandos slash sincronizados para o servidor %s",
+                        settings.discord_command_guild_id or "global",
+                    )
+                except Exception:
+                    logger.exception("Falha ao sincronizar os comandos slash")
             if settings.ticket_enabled and not self._ticket_views_registered:
                 self.bot.add_view(TicketPanelView(self))
                 self.bot.add_view(TicketView(self))

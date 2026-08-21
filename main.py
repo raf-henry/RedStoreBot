@@ -40,6 +40,7 @@ load_dotenv()
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("redstore")
+DEFAULT_DISCORD_GUILD_ID = "1535813395394330814"
 
 
 def parse_id_list(value: str) -> tuple[int, ...]:
@@ -128,8 +129,10 @@ class Settings:
     discord_client_id: str = os.getenv("DISCORD_CLIENT_ID", "")
     discord_client_secret: str = os.getenv("DISCORD_CLIENT_SECRET", "")
     discord_bot_token: str = os.getenv("DISCORD_BOT_TOKEN", "")
-    discord_guild_id: int = int(os.getenv("DISCORD_GUILD_ID", "0") or 0)
-    discord_command_guild_id: int = int(os.getenv("DISCORD_COMMAND_GUILD_ID", "0") or 0)
+    discord_guild_id: int = int(os.getenv("DISCORD_GUILD_ID", DEFAULT_DISCORD_GUILD_ID) or 0)
+    discord_command_guild_id: int = int(
+        os.getenv("DISCORD_COMMAND_GUILD_ID", DEFAULT_DISCORD_GUILD_ID) or 0
+    )
     oauth_redirect_uri: str = os.getenv(
         "OAUTH_REDIRECT_URI",
         "http://localhost:8000/auth/discord/callback",
@@ -1159,6 +1162,9 @@ class DiscordBridge:
                 logger.exception("Falha na reconciliação do ranking de depósitos")
 
     def _register_commands(self) -> None:
+        command_guild_id = settings.discord_guild_id or settings.discord_command_guild_id
+        command_guild_ids = [command_guild_id] if command_guild_id else None
+
         @self.bot.event
         async def on_ready() -> None:
             logger.info("Bot conectado como %s", self.bot.user)
@@ -1169,7 +1175,7 @@ class DiscordBridge:
                     self._application_commands_synced = True
                     logger.info(
                         "Comandos slash sincronizados para o servidor %s",
-                        settings.discord_command_guild_id or "global",
+                        settings.discord_guild_id or settings.discord_command_guild_id or "global",
                     )
                 except Exception:
                     logger.exception("Falha ao sincronizar os comandos slash")
@@ -1190,7 +1196,7 @@ class DiscordBridge:
         @self.bot.slash_command(
             name="ping",
             description="Verifica se o RedStore está online",
-            guild_ids=[settings.discord_command_guild_id] if settings.discord_command_guild_id else None,
+            guild_ids=command_guild_ids,
         )
         async def ping(ctx: discord.ApplicationContext) -> None:
             await ctx.respond(f"Pong! {round(self.bot.latency * 1000)}ms")
@@ -1198,7 +1204,7 @@ class DiscordBridge:
         @self.bot.slash_command(
             name="site",
             description="Envia o link do RedStore",
-            guild_ids=[settings.discord_command_guild_id] if settings.discord_command_guild_id else None,
+            guild_ids=command_guild_ids,
         )
         async def site(ctx: discord.ApplicationContext) -> None:
             await ctx.respond(f"Acesse o RedStore: {settings.site_url}", ephemeral=True)
@@ -1206,7 +1212,7 @@ class DiscordBridge:
         @self.bot.slash_command(
             name="verificar",
             description="Mostra seus cargos no servidor configurado",
-            guild_ids=[settings.discord_command_guild_id] if settings.discord_command_guild_id else None,
+            guild_ids=command_guild_ids,
         )
         async def verificar(ctx: discord.ApplicationContext) -> None:
             if not isinstance(ctx.author, discord.Member):
@@ -1225,7 +1231,7 @@ class DiscordBridge:
         @self.bot.slash_command(
             name="rank",
             description="Mostra seus depósitos confirmados e atualiza seu cargo",
-            guild_ids=[settings.discord_command_guild_id] if settings.discord_command_guild_id else None,
+            guild_ids=command_guild_ids,
         )
         async def rank(ctx: discord.ApplicationContext) -> None:
             await ctx.defer(ephemeral=True)
@@ -1272,7 +1278,7 @@ class DiscordBridge:
         @self.bot.slash_command(
             name="ranking",
             description="Mostra os 10 usuários com maior gasto no RedStore",
-            guild_ids=[settings.discord_command_guild_id] if settings.discord_command_guild_id else None,
+            guild_ids=command_guild_ids,
         )
         async def ranking(ctx: discord.ApplicationContext) -> None:
             await ctx.defer()
@@ -1321,7 +1327,7 @@ class DiscordBridge:
         @self.bot.slash_command(
             name="robux",
             description="Calcula quantos Robux cabem no seu orçamento",
-            guild_ids=[settings.discord_command_guild_id] if settings.discord_command_guild_id else None,
+            guild_ids=command_guild_ids,
         )
         async def robux_slash(
             ctx: discord.ApplicationContext,
@@ -1424,7 +1430,7 @@ class DiscordBridge:
             @self.bot.slash_command(
                 name="ticket",
                 description="Publica o painel de atendimento",
-                guild_ids=[settings.discord_command_guild_id] if settings.discord_command_guild_id else None,
+                guild_ids=command_guild_ids,
             )
             async def ticket(ctx: discord.ApplicationContext) -> None:
                 if not self._has_ticket_staff_access(ctx.author):
@@ -1452,7 +1458,7 @@ class DiscordBridge:
         @self.bot.slash_command(
             name="prova",
             description="Publica a prova de uma entrega",
-            guild_ids=[settings.discord_command_guild_id] if settings.discord_command_guild_id else None,
+            guild_ids=command_guild_ids,
         )
         async def prova_slash(
             ctx: discord.ApplicationContext,

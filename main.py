@@ -989,19 +989,20 @@ class DiscordBridge:
             guild_ids=[settings.discord_command_guild_id] if settings.discord_command_guild_id else None,
         )
         async def ranking(ctx: discord.ApplicationContext) -> None:
+            await ctx.defer(ephemeral=True)
             if not isinstance(ctx.author, discord.Member):
-                await ctx.respond("Este comando precisa ser usado dentro de um servidor.", ephemeral=True)
+                await ctx.followup.send("Este comando precisa ser usado dentro de um servidor.", ephemeral=True)
                 return
             try:
                 message = await self._deposit_ranking_message(ctx.author)
             except (RuntimeError, httpx.HTTPError, ValueError) as exc:
                 logger.warning("Não foi possível consultar o ranking de %s: %s", ctx.author.id, exc)
-                await ctx.respond(
+                await ctx.followup.send(
                     "Não foi possível consultar seus depósitos agora. Tente novamente em instantes.",
                     ephemeral=True,
                 )
                 return
-            await ctx.respond(message, ephemeral=True)
+            await ctx.followup.send(message, ephemeral=True)
 
         @self.bot.command(name="ranking")
         async def ranking_prefix(ctx: commands.Context) -> None:

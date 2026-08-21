@@ -1022,6 +1022,132 @@ class DiscordBridge:
             f"{next_text}"
         )
 
+    def _current_deposit_role_name(self, member: discord.Member | None) -> str:
+        if member is None:
+            return "Fora do servidor"
+
+        member_role_ids = {role.id for role in member.roles}
+        matching_tiers = [
+            (minimum_amount, tier_name)
+            for tier_name, minimum_amount, role_id in DEPOSIT_TIERS
+            if role_id > 0 and role_id in member_role_ids
+        ]
+        if not matching_tiers:
+            return "Sem cargo"
+        return max(matching_tiers, key=lambda tier: tier[0])[1]
+
+    async def _deposit_leaderboard_profile(
+        self,
+        guild: discord.Guild,
+        discord_id: str,
+    ) -> dict[str, Any] | None:
+        try:
+            numeric_discord_id = int(discord_id)
+        except (TypeError, ValueError):
+            return None
+        if numeric_discord_id <= 0:
+            return None
+
+        member = guild.get_member(numeric_discord_id)
+        if member is None:
+            try:
+                member = await asyncio.wait_for(
+                    guild.fetch_member(numeric_discord_id),
+                    timeout=8,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Discord demorou ao consultar o usuário %s do ranking", discord_id)
+            except discord.NotFound:
+                pass
+            except discord.HTTPException as exc:
+                logger.warning("Não foi possível consultar o membro %s do ranking: %s", discord_id, exc)
+
+        profile: discord.Member | discord.User | None = member
+        if profile is None:
+            try:
+                profile = await asyncio.wait_for(
+                    self.bot.fetch_user(numeric_discord_id),
+                    timeout=8,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Discord demorou ao consultar o perfil %s do ranking", discord_id)
+            except discord.NotFound:
+                pass
+            except discord.HTTPException as exc:
+                logger.warning("Não foi possível consultar o perfil %s do ranking: %s", discord_id, exc)
+
+        display_name = "Usuário não encontrado"
+        username = "indisponível"
+        avatar_url: str | None = None
+        if profile is not None:
+            display_name = (
+                getattr(profile, "display_name", None)
+                or getattr(profile, "global_name", None)
+                or profile.name
+            )
+            username = profile.name
+            avatar = getattr(profile, "display_avatar", None)
+            if avatar is not None:
+                avatar_url = str(avatar.url)
+
+        return {
+            "discord_id": str(numeric_discord_id),
+            "display_name": display_name,
+            "username": username,
+            "avatar_url": avatar_url,
+            "deposit_role": self._current_deposit_role_name(member),
+        }
+
+    async def _deposit_leaderboard_embeds(self) -> list[discord.Embed]:
+        summaries = await self._fetch_all_deposit_summaries()
+        top_summaries = sorted(
+            summaries,
+            key=lambda summary: (summary[1], summary[0]),
+            reverse=True,
+        )[:10]
+        if not top_summaries:
+            return []
+
+        guild = self._guild_on_bot_loop()
+        profiles = await asyncio.gather(
+            *(
+                self._deposit_leaderboard_profile(guild, discord_id)
+                for discord_id, _ in top_summaries
+            )
+        )
+
+        embeds: list[discord.Embed] = []
+        position = 0
+        for (discord_id, amount), profile in zip(top_summaries, profiles):
+            if profile is None:
+                continue
+            position += 1
+            embed = discord.Embed(
+                title=f"#{position} — {profile['display_name']}",
+                color=discord.Color.gold() if position == 1 else discord.Color.blurple(),
+            )
+            if profile["avatar_url"]:
+                embed.set_thumbnail(url=profile["avatar_url"])
+            embed.add_field(
+                name="Nome (Discord)",
+                value=f"{profile['display_name']} (@{profile['username']})",
+                inline=False,
+            )
+            embed.add_field(name="ID do Discord", value=f"`{discord_id}`", inline=True)
+            embed.add_field(
+                name="Cargo de depósito",
+                value=f"**{profile['deposit_role']}**",
+                inline=True,
+            )
+            embed.add_field(
+                name="Total gasto",
+                value=f"**{format_currency(amount, 'BRL')}**",
+                inline=True,
+            )
+            embed.set_footer(text="Ranking de depósitos • Top 10")
+            embeds.append(embed)
+        return embeds
+
     async def _reconcile_deposit_roles_loop(self) -> None:
         while True:
             await asyncio.sleep(settings.deposit_role_sync_interval_seconds)
@@ -1096,11 +1222,11 @@ class DiscordBridge:
             await ctx.respond(f"Sua conta está vinculada ao RedStore. Cargos: {roles}", ephemeral=True)
 
         @self.bot.slash_command(
-            name="ranking",
+            name="rank",
             description="Mostra seus depósitos confirmados e atualiza seu cargo",
             guild_ids=[settings.discord_command_guild_id] if settings.discord_command_guild_id else None,
         )
-        async def ranking(ctx: discord.ApplicationContext) -> None:
+        async def rank(ctx: discord.ApplicationContext) -> None:
             await ctx.defer(ephemeral=True)
             try:
                 if not isinstance(ctx.author, discord.Member):
@@ -1129,8 +1255,8 @@ class DiscordBridge:
                 return
             await ctx.followup.send(message, ephemeral=True)
 
-        @self.bot.command(name="ranking")
-        async def ranking_prefix(ctx: commands.Context) -> None:
+        @self.bot.command(name="rank")
+        async def rank_prefix(ctx: commands.Context) -> None:
             if not isinstance(ctx.author, discord.Member):
                 await ctx.reply("Este comando precisa ser usado dentro de um servidor.")
                 return
@@ -1141,6 +1267,55 @@ class DiscordBridge:
                 await ctx.reply("Não foi possível consultar seus depósitos agora. Tente novamente em instantes.")
                 return
             await ctx.reply(message)
+
+        @self.bot.slash_command(
+            name="ranking",
+            description="Mostra os 10 usuários com maior gasto no RedStore",
+            guild_ids=[settings.discord_command_guild_id] if settings.discord_command_guild_id else None,
+        )
+        async def ranking(ctx: discord.ApplicationContext) -> None:
+            await ctx.defer()
+            try:
+                embeds = await asyncio.wait_for(
+                    self._deposit_leaderboard_embeds(),
+                    timeout=30,
+                )
+            except asyncio.TimeoutError:
+                logger.error("A consulta do top 10 do ranking excedeu 30 segundos")
+                await ctx.followup.send(
+                    "A consulta demorou mais que o esperado. Tente novamente em instantes."
+                )
+                return
+            except Exception:
+                logger.exception("Falha ao processar o top 10 do ranking")
+                await ctx.followup.send(
+                    "Não foi possível consultar o ranking agora. Tente novamente em instantes."
+                )
+                return
+            if not embeds:
+                await ctx.followup.send("Ainda não há depósitos confirmados para exibir no ranking.")
+                return
+            await ctx.followup.send(embeds=embeds)
+
+        @self.bot.command(name="ranking")
+        async def ranking_prefix(ctx: commands.Context) -> None:
+            try:
+                embeds = await asyncio.wait_for(
+                    self._deposit_leaderboard_embeds(),
+                    timeout=30,
+                )
+            except asyncio.TimeoutError:
+                logger.error("A consulta do top 10 do ranking excedeu 30 segundos")
+                await ctx.reply("A consulta demorou mais que o esperado. Tente novamente em instantes.")
+                return
+            except Exception:
+                logger.exception("Falha ao processar o top 10 do ranking")
+                await ctx.reply("Não foi possível consultar o ranking agora. Tente novamente em instantes.")
+                return
+            if not embeds:
+                await ctx.reply("Ainda não há depósitos confirmados para exibir no ranking.")
+                return
+            await ctx.reply(embeds=embeds)
 
         @self.bot.slash_command(
             name="robux",

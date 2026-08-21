@@ -13,7 +13,7 @@ Backend que conecta o site RedStore ao servidor Discord. Ele executa a API web/O
 - Consulta de presença e cargos no servidor configurado.
 - API interna protegida pelo header `X-RedStore-Api-Key`.
 - API para adicionar/remover cargos, com checagem da hierarquia do bot.
-- Comandos `/ping`, `/site`, `/verificar` e `/robux` (também `!robux`).
+- Comandos `/ping`, `/site`, `/verificar`, `/rank`, `/ranking` e `/robux` (também com prefixo quando aplicável).
 - Sistema de tickets com painel, abertura de canal privado, assumir, notificar, renomear, fechar e logs.
 - Comandos `!prova` e `/prova` para entregadores publicarem a prova da entrega.
 - Endpoint `/health` para monitoramento.
@@ -53,8 +53,10 @@ Para receber uma DM quando um usuário clicar em “Já fiz o pagamento”, conf
 `DEPOSIT_NOTIFICATION_DISCORD_ID` com o ID Discord do administrador responsável
 por conferir os depósitos. A notificação informa o usuário e o valor solicitado.
 
-O comando `/ranking` (e `!ranking`) sincroniza automaticamente o cargo conforme o
-total de depósitos confirmados, seguindo esta progressão:
+O comando `/rank` (e `!rank`) mostra os depósitos confirmados do usuário e
+sincroniza automaticamente seu cargo conforme a progressão abaixo. O comando
+`/ranking` (e `!ranking`) publica o top 10 de usuários com maior gasto, exibindo
+avatar, nome, ID do Discord, cargo de depósito atual e total gasto.
 
 | Cargo | A partir de | ID |
 | --- | ---: | --- |

@@ -154,6 +154,18 @@ class Settings:
     deliverer_role_id: int = int(os.getenv("DELIVERER_ROLE_ID", "0") or 0)
     deliverer_role_name: str = os.getenv("DELIVERER_ROLE_NAME", "Entregador")
     proof_channel_id: int = int(os.getenv("PROOF_CHANNEL_ID", "0") or 0)
+    deposit_bronze_role_id: int = int(
+        os.getenv("DEPOSIT_BRONZE_ROLE_ID", "1540196431875276820") or 0
+    )
+    deposit_prata_role_id: int = int(
+        os.getenv("DEPOSIT_PRATA_ROLE_ID", "1540196669801635910") or 0
+    )
+    deposit_ouro_role_id: int = int(
+        os.getenv("DEPOSIT_OURO_ROLE_ID", "1540196877193060372") or 0
+    )
+    deposit_role_sync_interval_seconds: int = max(
+        60, int(os.getenv("DEPOSIT_ROLE_SYNC_INTERVAL_SECONDS", "300") or 300)
+    )
     cors_origins: tuple[str, ...] = tuple(
         origin.strip()
         for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
@@ -162,6 +174,17 @@ class Settings:
 
 
 settings = Settings()
+
+
+def deposit_tier_for_amount(amount: Decimal) -> tuple[str | None, Decimal | None, int | None]:
+    """Returns the highest deposit tier reached by the confirmed total."""
+    if amount >= Decimal("50.00"):
+        return "Ouro", Decimal("50.00"), settings.deposit_ouro_role_id
+    if amount >= Decimal("30.00"):
+        return "Prata", Decimal("30.00"), settings.deposit_prata_role_id
+    if amount >= Decimal("1.00"):
+        return "Bronze", Decimal("1.00"), settings.deposit_bronze_role_id
+    return None, None, None
 
 
 def validate_configuration() -> None:
@@ -644,6 +667,7 @@ class DiscordBridge:
         self._legacy_ticket_topics_migrated = False
         self._proof_number_lock = asyncio.Lock()
         self._deposit_review_in_flight: set[int] = set()
+        self._deposit_role_sync_task: asyncio.Task[None] | None = None
         self._ptax_cache: tuple[float, Decimal, Decimal, str] | None = None
         self._register_commands()
 
@@ -731,6 +755,180 @@ class DiscordBridge:
             "ptax": ptax,
         }
 
+    async def _fetch_confirmed_deposit_amount(self, discord_id: str) -> Decimal:
+        if not settings.redstore_bridge_api_key:
+            raise RuntimeError("REDSTORE_BRIDGE_API_KEY não está configurada")
+        endpoint = (
+            f"{settings.redstore_api_url.rstrip('/')}/api/internal/discord/users/"
+            f"{discord_id}/deposit-summary"
+        )
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(
+                endpoint,
+                headers={"X-Discord-Bridge-Key": settings.redstore_bridge_api_key},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        try:
+            amount = Decimal(str(payload.get("confirmedAmount", "0")))
+        except (ArithmeticError, TypeError, ValueError) as exc:
+            raise RuntimeError("O resumo de depósitos retornado pelo RedStore é inválido") from exc
+        if not amount.is_finite() or amount < 0:
+            raise RuntimeError("O resumo de depósitos retornado pelo RedStore é inválido")
+        return amount
+
+    async def _fetch_deposit_summary(self, deposit_id: int) -> tuple[str | None, Decimal]:
+        if not settings.redstore_bridge_api_key:
+            raise RuntimeError("REDSTORE_BRIDGE_API_KEY não está configurada")
+        endpoint = (
+            f"{settings.redstore_api_url.rstrip('/')}/api/internal/discord/deposits/"
+            f"{deposit_id}/deposit-summary"
+        )
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(
+                endpoint,
+                headers={"X-Discord-Bridge-Key": settings.redstore_bridge_api_key},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        try:
+            amount = Decimal(str(payload.get("confirmedAmount", "0")))
+        except (ArithmeticError, TypeError, ValueError) as exc:
+            raise RuntimeError("O resumo de depósitos retornado pelo RedStore é inválido") from exc
+        if not amount.is_finite() or amount < 0:
+            raise RuntimeError("O resumo de depósitos retornado pelo RedStore é inválido")
+        discord_id = payload.get("discordId")
+        return (str(discord_id) if discord_id else None), amount
+
+    async def _fetch_all_deposit_summaries(self) -> list[tuple[str, Decimal]]:
+        if not settings.redstore_bridge_api_key:
+            raise RuntimeError("REDSTORE_BRIDGE_API_KEY não está configurada")
+        endpoint = f"{settings.redstore_api_url.rstrip('/')}/api/internal/discord/deposit-summaries"
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(
+                endpoint,
+                headers={"X-Discord-Bridge-Key": settings.redstore_bridge_api_key},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        if not isinstance(payload, list):
+            raise RuntimeError("A lista de depósitos retornada pelo RedStore é inválida")
+
+        summaries: list[tuple[str, Decimal]] = []
+        for item in payload:
+            if not isinstance(item, dict) or not item.get("discordId"):
+                continue
+            try:
+                amount = Decimal(str(item.get("confirmedAmount", "0")))
+            except (ArithmeticError, TypeError, ValueError) as exc:
+                raise RuntimeError("A lista de depósitos retornada pelo RedStore é inválida") from exc
+            if not amount.is_finite() or amount < 0:
+                raise RuntimeError("A lista de depósitos retornada pelo RedStore é inválida")
+            summaries.append((str(item["discordId"]), amount))
+        return summaries
+
+    async def _sync_deposit_roles_on_bot_loop(
+        self,
+        discord_id: str,
+        confirmed_amount: Decimal | None = None,
+    ) -> dict[str, Any]:
+        try:
+            numeric_discord_id = int(discord_id)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("ID do Discord inválido") from exc
+        if numeric_discord_id <= 0:
+            raise RuntimeError("ID do Discord inválido")
+
+        guild = self._guild_on_bot_loop()
+        try:
+            member = await guild.fetch_member(numeric_discord_id)
+        except discord.NotFound:
+            return {
+                "discord_id": str(numeric_discord_id),
+                "is_member": False,
+                "confirmed_amount": confirmed_amount or Decimal("0"),
+                "tier": None,
+            }
+        except discord.HTTPException as exc:
+            raise RuntimeError("Discord não respondeu ao consultar o membro") from exc
+
+        amount = confirmed_amount
+        if amount is None:
+            amount = await self._fetch_confirmed_deposit_amount(str(numeric_discord_id))
+        tier_name, _, target_role_id = deposit_tier_for_amount(amount)
+        configured_role_ids = (
+            settings.deposit_bronze_role_id,
+            settings.deposit_prata_role_id,
+            settings.deposit_ouro_role_id,
+        )
+
+        for role_id in dict.fromkeys(role_id for role_id in configured_role_ids if role_id > 0):
+            role = guild.get_role(role_id)
+            if role is None:
+                logger.warning("Cargo de depósito %s não foi encontrado no servidor", role_id)
+                continue
+            if not guild.me or role >= guild.me.top_role:
+                logger.error("O bot não pode gerenciar o cargo de depósito %s", role_id)
+                continue
+            should_have_role = role_id == target_role_id
+            has_role = role in member.roles
+            try:
+                if should_have_role and not has_role:
+                    await member.add_roles(role, reason="Sincronização do ranking de depósitos confirmados")
+                elif not should_have_role and has_role:
+                    await member.remove_roles(role, reason="Atualização do ranking de depósitos confirmados")
+            except discord.Forbidden as exc:
+                raise RuntimeError(f"Discord recusou a alteração do cargo de depósito {role_id}") from exc
+            except discord.HTTPException as exc:
+                raise RuntimeError("Discord não respondeu à alteração do cargo de depósito") from exc
+
+        return {
+            "discord_id": str(numeric_discord_id),
+            "is_member": True,
+            "confirmed_amount": amount,
+            "tier": tier_name,
+            "role_id": target_role_id,
+        }
+
+    async def _deposit_ranking_message(self, member: discord.Member) -> str:
+        result = await self._sync_deposit_roles_on_bot_loop(str(member.id))
+        amount = result["confirmed_amount"]
+        tier_name = result.get("tier")
+        if tier_name:
+            tier_text = f"**{tier_name}**"
+        else:
+            tier_text = "**Sem cargo**"
+
+        if amount < Decimal("1.00"):
+            next_text = f"Faltam {format_currency(Decimal('1.00') - amount, 'BRL')} para Bronze."
+        elif amount < Decimal("30.00"):
+            next_text = f"Faltam {format_currency(Decimal('30.00') - amount, 'BRL')} para Prata."
+        elif amount < Decimal("50.00"):
+            next_text = f"Faltam {format_currency(Decimal('50.00') - amount, 'BRL')} para Ouro."
+        else:
+            next_text = "Você alcançou o nível máximo."
+
+        return (
+            "🏆 **Ranking de depósitos**\n"
+            f"Depósitos confirmados: **{format_currency(amount, 'BRL')}**\n"
+            f"Cargo atual: {tier_text}\n"
+            f"{next_text}"
+        )
+
+    async def _reconcile_deposit_roles_loop(self) -> None:
+        while True:
+            try:
+                for discord_id, amount in await self._fetch_all_deposit_summaries():
+                    try:
+                        await self._sync_deposit_roles_on_bot_loop(discord_id, amount)
+                    except (RuntimeError, httpx.HTTPError) as exc:
+                        logger.warning("Não foi possível sincronizar o ranking de %s: %s", discord_id, exc)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Falha na reconciliação do ranking de depósitos")
+            await asyncio.sleep(settings.deposit_role_sync_interval_seconds)
+
     def _register_commands(self) -> None:
         @self.bot.event
         async def on_ready() -> None:
@@ -743,6 +941,11 @@ class DiscordBridge:
             if settings.ticket_enabled and not self._legacy_ticket_topics_migrated:
                 await self._migrate_legacy_ticket_topics()
                 self._legacy_ticket_topics_migrated = True
+            if self._deposit_role_sync_task is None or self._deposit_role_sync_task.done():
+                self._deposit_role_sync_task = asyncio.create_task(
+                    self._reconcile_deposit_roles_loop(),
+                    name="deposit-role-reconciliation",
+                )
             self.ready.set()
 
         @self.bot.slash_command(
@@ -779,6 +982,39 @@ class DiscordBridge:
                 return
             roles = ", ".join(role.name for role in ctx.author.roles if role.name != "@everyone") or "nenhum"
             await ctx.respond(f"Sua conta está vinculada ao RedStore. Cargos: {roles}", ephemeral=True)
+
+        @self.bot.slash_command(
+            name="ranking",
+            description="Mostra seus depósitos confirmados e atualiza seu cargo",
+            guild_ids=[settings.discord_command_guild_id] if settings.discord_command_guild_id else None,
+        )
+        async def ranking(ctx: discord.ApplicationContext) -> None:
+            if not isinstance(ctx.author, discord.Member):
+                await ctx.respond("Este comando precisa ser usado dentro de um servidor.", ephemeral=True)
+                return
+            try:
+                message = await self._deposit_ranking_message(ctx.author)
+            except (RuntimeError, httpx.HTTPError, ValueError) as exc:
+                logger.warning("Não foi possível consultar o ranking de %s: %s", ctx.author.id, exc)
+                await ctx.respond(
+                    "Não foi possível consultar seus depósitos agora. Tente novamente em instantes.",
+                    ephemeral=True,
+                )
+                return
+            await ctx.respond(message, ephemeral=True)
+
+        @self.bot.command(name="ranking")
+        async def ranking_prefix(ctx: commands.Context) -> None:
+            if not isinstance(ctx.author, discord.Member):
+                await ctx.reply("Este comando precisa ser usado dentro de um servidor.")
+                return
+            try:
+                message = await self._deposit_ranking_message(ctx.author)
+            except (RuntimeError, httpx.HTTPError, ValueError) as exc:
+                logger.warning("Não foi possível consultar o ranking de %s: %s", ctx.author.id, exc)
+                await ctx.reply("Não foi possível consultar seus depósitos agora. Tente novamente em instantes.")
+                return
+            await ctx.reply(message)
 
         @self.bot.slash_command(
             name="robux",
@@ -1532,9 +1768,20 @@ class DiscordBridge:
             self._bot_stopped.set()
             loop.close()
 
+    async def _stop_deposit_role_sync_on_bot_loop(self) -> None:
+        task = self._deposit_role_sync_task
+        self._deposit_role_sync_task = None
+        if task and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     async def close(self) -> None:
         loop = self._bot_loop
         if loop and loop.is_running():
+            stop_sync_future = asyncio.run_coroutine_threadsafe(
+                self._stop_deposit_role_sync_on_bot_loop(), loop
+            )
+            await asyncio.wrap_future(stop_sync_future)
             close_future = asyncio.run_coroutine_threadsafe(self.bot.close(), loop)
             await asyncio.wrap_future(close_future)
             await asyncio.to_thread(self._bot_stopped.wait, 15)
@@ -1753,6 +2000,22 @@ class DiscordBridge:
                     f"✅ Depósito **{result.get('transactionCode', deposit_id)}** {status_text}. "
                     f"Valor: R$ {Decimal(str(result.get('amount', '0'))):.2f}."
                 ).replace(".", ",")
+                if action == "approve":
+                    discord_id, confirmed_amount = await self._fetch_deposit_summary(deposit_id)
+                    if discord_id:
+                        try:
+                            role_result = await self._sync_deposit_roles_on_bot_loop(
+                                str(discord_id), confirmed_amount
+                            )
+                            tier_name = role_result.get("tier") or "sem cargo"
+                            content += f" Cargo de depósito atualizado: **{tier_name}**."
+                        except (RuntimeError, httpx.HTTPError) as exc:
+                            logger.warning(
+                                "Depósito %s aprovado, mas o cargo não foi sincronizado: %s",
+                                deposit_id,
+                                exc,
+                            )
+                            content += " O cargo será sincronizado automaticamente em instantes."
             else:
                 detail = "Não foi possível concluir a revisão."
                 try:

@@ -990,13 +990,26 @@ class DiscordBridge:
         )
         async def ranking(ctx: discord.ApplicationContext) -> None:
             await ctx.defer(ephemeral=True)
-            if not isinstance(ctx.author, discord.Member):
-                await ctx.followup.send("Este comando precisa ser usado dentro de um servidor.", ephemeral=True)
-                return
             try:
-                message = await self._deposit_ranking_message(ctx.author)
-            except (RuntimeError, httpx.HTTPError, ValueError) as exc:
-                logger.warning("Não foi possível consultar o ranking de %s: %s", ctx.author.id, exc)
+                if not isinstance(ctx.author, discord.Member):
+                    await ctx.followup.send(
+                        "Este comando precisa ser usado dentro de um servidor.",
+                        ephemeral=True,
+                    )
+                    return
+                message = await asyncio.wait_for(
+                    self._deposit_ranking_message(ctx.author),
+                    timeout=20,
+                )
+            except asyncio.TimeoutError:
+                logger.error("A consulta do ranking de %s excedeu 20 segundos", ctx.author.id)
+                await ctx.followup.send(
+                    "A consulta demorou mais que o esperado. Tente novamente em instantes.",
+                    ephemeral=True,
+                )
+                return
+            except Exception:
+                logger.exception("Falha ao processar o ranking de %s", ctx.author.id)
                 await ctx.followup.send(
                     "Não foi possível consultar seus depósitos agora. Tente novamente em instantes.",
                     ephemeral=True,

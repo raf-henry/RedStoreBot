@@ -166,6 +166,9 @@ class Settings:
     deliverer_role_id: int = int(os.getenv("DELIVERER_ROLE_ID", "0") or 0)
     deliverer_role_name: str = os.getenv("DELIVERER_ROLE_NAME", "Entregador")
     proof_channel_id: int = int(os.getenv("PROOF_CHANNEL_ID", "0") or 0)
+    order_notification_channel_id: int = int(
+        (os.getenv("ORDER_NOTIFICATION_CHANNEL_ID") or os.getenv("PROOF_CHANNEL_ID", "0")) or 0
+    )
     deposit_plebeu_role_id: int = read_role_id(
         "DEPOSIT_PLEBEU_ROLE_ID", "1540196431875276820", "DEPOSIT_BRONZE_ROLE_ID"
     )
@@ -2246,6 +2249,120 @@ class DiscordBridge:
             return {"notified": False, "reason": "discord_error"}
         return {"notified": True}
 
+    def _deliverer_role_on_bot_loop(self, guild: discord.Guild) -> discord.Role | None:
+        if settings.deliverer_role_id:
+            return guild.get_role(settings.deliverer_role_id)
+        expected_name = settings.deliverer_role_name.strip().casefold()
+        return next(
+            (role for role in guild.roles if role.name.strip().casefold() == expected_name),
+            None,
+        )
+
+    def _order_notification_channel_on_bot_loop(
+        self,
+        guild: discord.Guild,
+    ) -> discord.TextChannel | discord.Thread | None:
+        if not settings.order_notification_channel_id:
+            return None
+        channel = guild.get_channel(settings.order_notification_channel_id)
+        if isinstance(channel, (discord.TextChannel, discord.Thread)):
+            return channel
+        return None
+
+    async def _send_order_notification_on_bot_loop(
+        self,
+        order_id: int,
+        order_code: str,
+        username: str,
+        roblox_nick: str | None,
+        total_amount: Decimal,
+        items: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        guild = self._guild_on_bot_loop()
+        role = self._deliverer_role_on_bot_loop(guild)
+        if role is None:
+            logger.warning("Cargo de entregador não foi encontrado para avisos de pedidos")
+            return {"notified": False, "reason": "deliverer_role_not_found"}
+
+        channel = self._order_notification_channel_on_bot_loop(guild)
+        if channel is None:
+            logger.warning(
+                "Canal de aviso de pedidos não foi encontrado; configure ORDER_NOTIFICATION_CHANNEL_ID"
+            )
+            return {"notified": False, "reason": "notification_channel_not_found"}
+
+        item_lines = []
+        for item in items:
+            title = str(item.get("product_title") or "Produto")
+            game = str(item.get("game") or "Jogo")
+            product_type = str(item.get("type") or "")
+            quantity = int(item.get("quantity") or 1)
+            suffix = f" • {product_type}" if product_type else ""
+            item_lines.append(f"{quantity}x **{title}** — {game}{suffix}")
+
+        embed = discord.Embed(
+            title="📦 Novo pedido para entrega",
+            description="Um novo pedido foi aprovado no site e está aguardando entrega.",
+            color=discord.Color.green(),
+        )
+        embed.add_field(name="Pedido", value=f"`{order_code}` (ID `{order_id}`)", inline=True)
+        embed.add_field(name="Cliente", value=username, inline=True)
+        embed.add_field(
+            name="Nick Roblox",
+            value=roblox_nick or "Não informado",
+            inline=True,
+        )
+        embed.add_field(
+            name="Itens",
+            value="\n".join(item_lines)[:1024] or "Nenhum item informado",
+            inline=False,
+        )
+        embed.add_field(
+            name="Total",
+            value=format_currency(total_amount, "BRL"),
+            inline=True,
+        )
+        embed.add_field(
+            name="Próximo passo",
+            value=f"Acesse {settings.site_url} e realize a entrega.",
+            inline=False,
+        )
+        embed.set_footer(text="RedStore • fila de entregas")
+
+        try:
+            await channel.send(
+                content=role.mention,
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions(roles=[role]),
+            )
+        except discord.Forbidden:
+            logger.warning("Discord recusou o aviso do pedido %s no canal %s", order_code, channel.id)
+            return {"notified": False, "reason": "send_forbidden"}
+        except discord.HTTPException:
+            logger.exception("Falha ao publicar o aviso do pedido %s", order_code)
+            return {"notified": False, "reason": "discord_error"}
+        return {"notified": True, "channel_id": str(channel.id), "role_id": str(role.id)}
+
+    async def notify_order_created(
+        self,
+        order_id: int,
+        order_code: str,
+        username: str,
+        roblox_nick: str | None,
+        total_amount: Decimal,
+        items: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return await self._run_on_bot_loop(
+            lambda: self._send_order_notification_on_bot_loop(
+                order_id,
+                order_code,
+                username,
+                roblox_nick,
+                total_amount,
+                items,
+            )
+        )
+
     async def notify_deposit_pending(
         self,
         deposit_id: int,
@@ -2357,6 +2474,22 @@ class DepositPendingNotification(BaseModel):
     discount_amount: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
     discount_code: str | None = Field(default=None, max_length=50)
     used_discount_code: bool = False
+
+
+class OrderItemNotification(BaseModel):
+    product_title: str = Field(min_length=1, max_length=200)
+    game: str = Field(min_length=1, max_length=100)
+    type: str = Field(default="", max_length=100)
+    quantity: int = Field(gt=0, le=100)
+
+
+class OrderCreatedNotification(BaseModel):
+    order_id: int = Field(gt=0)
+    order_code: str = Field(min_length=1, max_length=50)
+    username: str = Field(min_length=1, max_length=100)
+    roblox_nick: str | None = Field(default=None, max_length=100)
+    total_amount: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+    items: list[OrderItemNotification] = Field(min_length=1, max_length=50)
 
 
 class OAuthExchangeRequest(BaseModel):
@@ -2487,6 +2620,21 @@ async def notify_deposit_pending(payload: DepositPendingNotification) -> dict[st
         payload.discount_amount,
         payload.discount_code,
         payload.used_discount_code,
+    )
+
+
+@app.post(
+    "/api/v1/notifications/order-created",
+    dependencies=[Depends(require_bridge_api_key)],
+)
+async def notify_order_created(payload: OrderCreatedNotification) -> dict[str, Any]:
+    return await bridge.notify_order_created(
+        payload.order_id,
+        payload.order_code,
+        payload.username,
+        payload.roblox_nick,
+        payload.total_amount,
+        [item.model_dump() for item in payload.items],
     )
 
 

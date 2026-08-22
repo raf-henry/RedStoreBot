@@ -49,6 +49,11 @@ Backend que conecta o site RedStore ao servidor Discord. Ele executa a API web/O
    python main.py
    ```
 
+Novos pedidos pagos no site geram automaticamente um aviso no canal configurado em
+`ORDER_NOTIFICATION_CHANNEL_ID`, mencionando o cargo `Entregador`. Se essa variável
+ficar vazia, o bot usa `PROOF_CHANNEL_ID` como fallback. O backend precisa estar
+configurado com `DISCORD_BRIDGE_API_KEY` e `DISCORD_BRIDGE_URL` apontando para este bridge.
+
 Para receber uma DM quando um usuário clicar em “Já fiz o pagamento”, configure
 `DEPOSIT_NOTIFICATION_DISCORD_ID` com o ID Discord do administrador responsável
 por conferir os depósitos. A notificação informa o usuário e o valor solicitado.

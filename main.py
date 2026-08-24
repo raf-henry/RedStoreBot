@@ -43,6 +43,9 @@ logger = logging.getLogger("redstore")
 DEFAULT_DISCORD_GUILD_ID = "1535813395394330814"
 DEFAULT_PUBLIC_SITE_URL = "https://redbuxx.com.br"
 PUBLIC_SITE_HOSTS = {"redbuxx.com.br", "www.redbuxx.com.br"}
+LIVE_COMMAND_OWNER_ID = 385106984522743819
+LIVE_ANNOUNCEMENT_CHANNEL_ID = 1541592129644535828
+TIKTOK_PROFILE_URL = "https://www.tiktok.com/@.redlocker"
 
 
 def configured_site_url() -> str:
@@ -1226,6 +1229,51 @@ class DiscordBridge:
         )
         async def ping(ctx: discord.ApplicationContext) -> None:
             await ctx.respond(f"Pong! {round(self.bot.latency * 1000)}ms")
+
+        @self.bot.slash_command(
+            name="live",
+            description="Divulga a live no TikTok",
+            guild_ids=command_guild_ids,
+        )
+        async def live(ctx: discord.ApplicationContext) -> None:
+            if ctx.author.id != LIVE_COMMAND_OWNER_ID:
+                await ctx.respond(
+                    "Apenas o dono da live pode usar este comando.",
+                    ephemeral=True,
+                )
+                return
+
+            await ctx.defer(ephemeral=True)
+            live_channel = self.bot.get_channel(LIVE_ANNOUNCEMENT_CHANNEL_ID)
+            if live_channel is None:
+                try:
+                    live_channel = await self.bot.fetch_channel(LIVE_ANNOUNCEMENT_CHANNEL_ID)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    live_channel = None
+
+            if not isinstance(live_channel, (discord.TextChannel, discord.Thread)):
+                await ctx.followup.send(
+                    "Não encontrei um canal de texto válido para publicar a live.",
+                    ephemeral=True,
+                )
+                return
+
+            try:
+                await live_channel.send(
+                    "🔴 **Estou ao vivo no TikTok!**\n\n"
+                    f"Vem acompanhar a live: {TIKTOK_PROFILE_URL}"
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                await ctx.followup.send(
+                    "Não consegui publicar a divulgação nesse canal. Verifique as permissões do bot.",
+                    ephemeral=True,
+                )
+                return
+
+            await ctx.followup.send(
+                f"Divulgação enviada em {live_channel.mention}.",
+                ephemeral=True,
+            )
 
         @self.bot.slash_command(
             name="site",

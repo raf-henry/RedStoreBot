@@ -13,7 +13,7 @@ Backend que conecta o site RedStore ao servidor Discord. Ele executa a API web/O
 - Consulta de presença e cargos no servidor configurado.
 - API interna protegida pelo header `X-RedStore-Api-Key`.
 - API para adicionar/remover cargos, com checagem da hierarquia do bot.
-- Comandos `/ping`, `/site`, `/verificar`, `/rank`, `/ranking` e `/robux` (também com prefixo quando aplicável).
+- Comandos `/ping`, `/live`, `/site`, `/verificar`, `/rank`, `/ranking` e `/robux` (também com prefixo quando aplicável).
 - Sistema de tickets com painel, abertura de canal privado, assumir, notificar, renomear, fechar e logs.
 - Comandos `!prova` e `/prova` para entregadores publicarem a prova da entrega.
 - Endpoint `/health` para monitoramento.
@@ -57,6 +57,10 @@ configurado com `DISCORD_BRIDGE_API_KEY` e `DISCORD_BRIDGE_URL` apontando para e
 Para receber uma DM quando um usuário clicar em “Já fiz o pagamento”, configure
 `DEPOSIT_NOTIFICATION_DISCORD_ID` com o ID Discord do administrador responsável
 por conferir os depósitos. A notificação informa o usuário e o valor solicitado.
+
+O comando `/live` divulga a live do TikTok no canal de ID `1541592129644535828` e só
+pode ser usado pelo usuário Discord de ID `385106984522743819`. O link divulgado é
+`https://www.tiktok.com/@.redlocker`.
 
 O comando `/rank` (e `!rank`) mostra os depósitos confirmados do usuário e
 sincroniza automaticamente seu cargo conforme a progressão abaixo. O comando

@@ -107,15 +107,17 @@ reinicializações sem aparecerem no canal.
 
 ### Comandos `!prova` e `/prova`
 
-Um entregador deve mencionar o cliente, informar o produto e anexar a imagem da prova:
+Um entregador deve mencionar o cliente, informar o produto e anexar uma ou mais imagens da prova:
 
 ```text
 !prova @cliente 600 Gamepass
 ```
 
 O bot gera automaticamente `Venda #1`, `Venda #2` e assim por diante, mantendo a sequência no SQLite
-mesmo após reinicializações. No formato slash, use `/prova` e preencha `cliente`, `produto` e `imagem`.
-O bot publica no canal configurado um embed com a menção do cliente, produto, imagem anexada e horário da entrega. Comandos prefixados exigem que o
+mesmo após reinicializações. No formato slash, use `/prova`, preencha `cliente`, `produto` e `imagem`,
+e use os campos opcionais `imagem_2` até `imagem_10` quando necessário. No formato `!prova`, basta
+anexar várias imagens à mesma mensagem. O bot publica no canal configurado um embed com a menção do
+cliente, produto, todas as imagens anexadas e horário da entrega. Comandos prefixados exigem que o
 `Message Content Intent` esteja ativado no Discord Developer Portal.
 
 Durante o desenvolvimento, defina `DISCORD_COMMAND_GUILD_ID` com o ID do servidor de testes. Assim, os slash commands são registrados diretamente nele e aparecem rapidamente. Se ficar vazio, eles serão globais e podem demorar para aparecer.

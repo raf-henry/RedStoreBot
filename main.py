@@ -22,8 +22,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Awaitable, Callable, Literal
-from urllib.parse import urlencode
+from typing import Any, Awaitable, Callable, Literal, Sequence
+from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
 import discord
@@ -41,6 +41,29 @@ load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("redstore")
 DEFAULT_DISCORD_GUILD_ID = "1535813395394330814"
+DEFAULT_PUBLIC_SITE_URL = "https://redbuxx.com.br"
+PUBLIC_SITE_HOSTS = {"redbuxx.com.br", "www.redbuxx.com.br"}
+
+
+def configured_site_url() -> str:
+    """Return the public site URL without trusting a stale production host."""
+    configured = os.getenv("SITE_URL", "").strip().rstrip("/")
+    is_production = os.getenv("ENVIRONMENT", "development").lower() in {"production", "prod"}
+
+    if not configured:
+        return DEFAULT_PUBLIC_SITE_URL if is_production else "http://localhost:3000"
+
+    if is_production:
+        parsed = urlsplit(configured)
+        if parsed.scheme != "https" or parsed.hostname not in PUBLIC_SITE_HOSTS:
+            logger.warning(
+                "SITE_URL de produção inválida (%s); usando %s.",
+                configured,
+                DEFAULT_PUBLIC_SITE_URL,
+            )
+            return DEFAULT_PUBLIC_SITE_URL
+
+    return configured
 
 
 def parse_id_list(value: str) -> tuple[int, ...]:
@@ -137,7 +160,7 @@ class Settings:
         "OAUTH_REDIRECT_URI",
         "http://localhost:8000/auth/discord/callback",
     )
-    site_url: str = os.getenv("SITE_URL", "http://localhost:3000")
+    site_url: str = configured_site_url()
     redstore_api_url: str = os.getenv("REDSTORE_API_URL", "http://localhost:8080")
     redstore_bridge_api_key: str = os.getenv(
         "REDSTORE_BRIDGE_API_KEY",
@@ -1471,6 +1494,60 @@ class DiscordBridge:
                 discord.Attachment,
                 "Imagem da prova entregue",
             ),
+            imagem_2: discord.Attachment | None = discord.Option(
+                discord.Attachment,
+                "Imagem adicional 2",
+                required=False,
+                default=None,
+            ),
+            imagem_3: discord.Attachment | None = discord.Option(
+                discord.Attachment,
+                "Imagem adicional 3",
+                required=False,
+                default=None,
+            ),
+            imagem_4: discord.Attachment | None = discord.Option(
+                discord.Attachment,
+                "Imagem adicional 4",
+                required=False,
+                default=None,
+            ),
+            imagem_5: discord.Attachment | None = discord.Option(
+                discord.Attachment,
+                "Imagem adicional 5",
+                required=False,
+                default=None,
+            ),
+            imagem_6: discord.Attachment | None = discord.Option(
+                discord.Attachment,
+                "Imagem adicional 6",
+                required=False,
+                default=None,
+            ),
+            imagem_7: discord.Attachment | None = discord.Option(
+                discord.Attachment,
+                "Imagem adicional 7",
+                required=False,
+                default=None,
+            ),
+            imagem_8: discord.Attachment | None = discord.Option(
+                discord.Attachment,
+                "Imagem adicional 8",
+                required=False,
+                default=None,
+            ),
+            imagem_9: discord.Attachment | None = discord.Option(
+                discord.Attachment,
+                "Imagem adicional 9",
+                required=False,
+                default=None,
+            ),
+            imagem_10: discord.Attachment | None = discord.Option(
+                discord.Attachment,
+                "Imagem adicional 10",
+                required=False,
+                default=None,
+            ),
         ) -> None:
             if not isinstance(ctx.author, discord.Member) or not self._has_deliverer_access(ctx.author):
                 await ctx.respond(
@@ -1481,8 +1558,24 @@ class DiscordBridge:
             if ctx.guild is None:
                 await ctx.respond("Este comando só pode ser usado dentro do servidor.", ephemeral=True)
                 return
-            if not self._is_image_attachment(imagem):
-                await ctx.respond("A imagem informada não é válida.", ephemeral=True)
+            imagens = [
+                attachment
+                for attachment in (
+                    imagem,
+                    imagem_2,
+                    imagem_3,
+                    imagem_4,
+                    imagem_5,
+                    imagem_6,
+                    imagem_7,
+                    imagem_8,
+                    imagem_9,
+                    imagem_10,
+                )
+                if attachment is not None
+            ]
+            if any(not self._is_image_attachment(attachment) for attachment in imagens):
+                await ctx.respond("Uma das imagens informadas não é válida.", ephemeral=True)
                 return
             destination = self._proof_destination(ctx.guild, ctx.channel)
             if destination is None:
@@ -1492,7 +1585,7 @@ class DiscordBridge:
                 )
                 return
             await ctx.respond("Publicando prova...", ephemeral=True)
-            await self.publish_proof(destination, cliente, produto, imagem)
+            await self.publish_proof(destination, cliente, produto, imagens)
 
         @self.bot.command(name="prova")
         async def prova(ctx: commands.Context, *, argumentos: str = "") -> None:
@@ -1504,7 +1597,8 @@ class DiscordBridge:
                 return
             if not ctx.message.mentions:
                 await ctx.reply(
-                    "Uso: `!prova @cliente produto` com uma imagem anexada. O número da venda é automático."
+                    "Uso: `!prova @cliente produto` com uma ou mais imagens anexadas. "
+                    "O número da venda é automático."
                 )
                 return
 
@@ -1516,39 +1610,20 @@ class DiscordBridge:
                 )
                 return
 
-            imagem = next(
-                (
-                    attachment
-                    for attachment in ctx.message.attachments
-                    if self._is_image_attachment(attachment)
-                ),
-                None,
-            )
-            if imagem is None:
-                await ctx.reply("Anexe a imagem da prova entregue junto com o comando.")
+            imagens = [
+                attachment
+                for attachment in ctx.message.attachments
+                if self._is_image_attachment(attachment)
+            ]
+            if not imagens:
+                await ctx.reply("Anexe uma ou mais imagens da prova entregue junto com o comando.")
                 return
 
             destination = self._proof_destination(ctx.guild, ctx.channel)
             if destination is None:
                 await ctx.reply("O canal configurado para provas não foi encontrado neste servidor.")
                 return
-            venda = await self._next_sale_number(destination)
-            horario = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%H:%M")
-            titulo = f"🔒 Venda #{venda}" if venda else "🔒 Venda concluída"
-            embed = discord.Embed(
-                title=titulo,
-                description="Obrigado pela preferência! 🏅",
-                color=discord.Color.gold(),
-            )
-            embed.add_field(name="Cliente", value=cliente.mention, inline=False)
-            embed.add_field(name="Produto", value=produto[:1024], inline=False)
-            embed.set_image(url=imagem.url)
-            embed.set_footer(text=f"Hoje às {horario}")
-            await destination.send(
-                content=cliente.mention,
-                embed=embed,
-                allowed_mentions=discord.AllowedMentions(users=[cliente]),
-            )
+            await self.publish_proof(destination, cliente, produto, imagens)
 
     @staticmethod
     def _is_image_attachment(attachment: discord.Attachment) -> bool:
@@ -1595,24 +1670,48 @@ class DiscordBridge:
         destination: discord.abc.Messageable,
         cliente: discord.Member,
         produto: str,
-        imagem: discord.Attachment,
+        imagens: Sequence[discord.Attachment],
     ) -> None:
+        if not imagens:
+            raise ValueError("A prova precisa ter pelo menos uma imagem.")
+
         numero = await self._next_sale_number(destination)
         horario = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%H:%M")
-        embed = discord.Embed(
+        rotulo_imagens = "imagem" if len(imagens) == 1 else "imagens"
+        embed_principal = discord.Embed(
             title=f"🔒 Venda #{numero}",
             description="Obrigado pela preferência! 🏅",
             color=discord.Color.gold(),
         )
-        embed.add_field(name="Cliente", value=cliente.mention, inline=False)
-        embed.add_field(name="Produto", value=produto[:1024], inline=False)
-        embed.set_image(url=imagem.url)
-        embed.set_footer(text=f"Hoje às {horario}")
-        await destination.send(
-            content=cliente.mention,
-            embed=embed,
-            allowed_mentions=discord.AllowedMentions(users=[cliente]),
-        )
+        embed_principal.add_field(name="Cliente", value=cliente.mention, inline=False)
+        embed_principal.add_field(name="Produto", value=produto[:1024], inline=False)
+        embed_principal.set_image(url=imagens[0].url)
+        embed_principal.set_footer(text=f"Hoje às {horario} • {len(imagens)} {rotulo_imagens}")
+
+        embeds = [embed_principal]
+        for imagem in imagens[1:]:
+            embed = discord.Embed(color=discord.Color.gold())
+            embed.set_image(url=imagem.url)
+            embeds.append(embed)
+
+        # O Discord limita cada mensagem a 10 embeds; pedidos maiores seguem
+        # em mensagens de continuação sem repetir a menção do cliente.
+        for indice in range(0, len(embeds), 10):
+            lote = embeds[indice:indice + 10]
+            primeira_mensagem = indice == 0
+            await destination.send(
+                content=(
+                    cliente.mention
+                    if primeira_mensagem
+                    else f"Continuação da prova da Venda #{numero}"
+                ),
+                embeds=lote,
+                allowed_mentions=(
+                    discord.AllowedMentions(users=[cliente])
+                    if primeira_mensagem
+                    else discord.AllowedMentions.none()
+                ),
+            )
 
     @staticmethod
     def _has_deliverer_access(member: discord.Member) -> bool:

@@ -1384,9 +1384,9 @@ class DiscordBridge:
 
             try:
                 await live_channel.send(
-                    f"<@&{LIVE_NOTIFICATION_ROLE_ID}>\n"
                     "🔴 **Estou ao vivo no TikTok!**\n\n"
-                    f"Vem acompanhar a live: {TIKTOK_PROFILE_URL}"
+                    f"Vem acompanhar a live: {TIKTOK_PROFILE_URL}\n\n"
+                    f"||<@&{LIVE_NOTIFICATION_ROLE_ID}>||"
                 )
             except (discord.Forbidden, discord.HTTPException):
                 await ctx.followup.send(

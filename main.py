@@ -46,6 +46,7 @@ PUBLIC_SITE_HOSTS = {"redbuxx.com.br", "www.redbuxx.com.br"}
 LIVE_COMMAND_OWNER_ID = 385106984522743819
 LIVE_ANNOUNCEMENT_CHANNEL_ID = 1541592129644535828
 TIKTOK_PROFILE_URL = "https://www.tiktok.com/@.redlocker"
+DEPOSIT_TOP_RANKING_ROLE_ID = 1541798809481384018
 EXCLUDED_DEPOSIT_RANKING_IDS = frozenset(
     {
         "385106984522743819",
@@ -308,6 +309,20 @@ def deposit_tier_for_amount(amount: Decimal) -> tuple[str | None, Decimal | None
         if amount >= minimum_amount:
             return tier_name, minimum_amount, role_id
     return None, None, None
+
+
+def eligible_deposit_ranking_summaries(
+    summaries: Sequence[tuple[str, Decimal]],
+) -> list[tuple[str, Decimal]]:
+    return sorted(
+        (
+            summary
+            for summary in summaries
+            if str(summary[0]) not in EXCLUDED_DEPOSIT_RANKING_IDS
+        ),
+        key=lambda summary: (summary[1], summary[0]),
+        reverse=True,
+    )
 
 
 def validate_configuration() -> None:
@@ -791,6 +806,7 @@ class DiscordBridge:
         self._proof_number_lock = asyncio.Lock()
         self._deposit_review_in_flight: set[int] = set()
         self._deposit_role_sync_task: asyncio.Task[None] | None = None
+        self._deposit_ranking_role_lock = asyncio.Lock()
         self._application_commands_synced = False
         self._ptax_cache: tuple[float, Decimal, Decimal, str] | None = None
         self._register_commands()
@@ -1032,6 +1048,97 @@ class DiscordBridge:
             "role_id": target_role_id,
         }
 
+    async def _sync_top_deposit_ranking_role(self, top_discord_id: str | None) -> None:
+        async with self._deposit_ranking_role_lock:
+            guild = self._guild_on_bot_loop()
+            role = guild.get_role(DEPOSIT_TOP_RANKING_ROLE_ID)
+            if role is None:
+                logger.warning(
+                    "Cargo do top 1 do ranking de depósitos %s não foi encontrado no servidor",
+                    DEPOSIT_TOP_RANKING_ROLE_ID,
+                )
+                return
+            if not guild.me or role >= guild.me.top_role:
+                logger.error(
+                    "O bot não pode gerenciar o cargo do top 1 do ranking de depósitos %s",
+                    DEPOSIT_TOP_RANKING_ROLE_ID,
+                )
+                return
+
+            target_member: discord.Member | None = None
+            numeric_top_discord_id: int | None = None
+            if top_discord_id and str(top_discord_id) not in EXCLUDED_DEPOSIT_RANKING_IDS:
+                try:
+                    numeric_top_discord_id = int(top_discord_id)
+                except (TypeError, ValueError):
+                    numeric_top_discord_id = None
+                if numeric_top_discord_id and numeric_top_discord_id > 0:
+                    target_member = guild.get_member(numeric_top_discord_id)
+                    if target_member is None:
+                        try:
+                            target_member = await asyncio.wait_for(
+                                guild.fetch_member(numeric_top_discord_id),
+                                timeout=8,
+                            )
+                        except asyncio.TimeoutError:
+                            logger.warning(
+                                "Discord demorou ao consultar o top 1 %s do ranking",
+                                top_discord_id,
+                            )
+                        except discord.NotFound:
+                            logger.info(
+                                "O top 1 %s do ranking não está no servidor",
+                                top_discord_id,
+                            )
+                        except discord.HTTPException as exc:
+                            logger.warning(
+                                "Não foi possível consultar o top 1 %s do ranking: %s",
+                                top_discord_id,
+                                exc,
+                            )
+
+            for member in list(role.members):
+                if target_member is not None and member.id == target_member.id:
+                    continue
+                try:
+                    await asyncio.wait_for(
+                        member.remove_roles(
+                            role,
+                            reason="Usuário deixou o top 1 do ranking de depósitos",
+                        ),
+                        timeout=8,
+                    )
+                except asyncio.TimeoutError as exc:
+                    raise RuntimeError(
+                        f"Discord demorou ao remover o cargo do ranking de {member.id}"
+                    ) from exc
+                except discord.Forbidden as exc:
+                    raise RuntimeError(
+                        f"Discord recusou a remoção do cargo do ranking de {member.id}"
+                    ) from exc
+                except discord.HTTPException as exc:
+                    raise RuntimeError(
+                        "Discord não respondeu à remoção do cargo do ranking"
+                    ) from exc
+
+            if target_member is not None and role not in target_member.roles:
+                try:
+                    await asyncio.wait_for(
+                        target_member.add_roles(
+                            role,
+                            reason="Usuário alcançou o top 1 do ranking de depósitos",
+                        ),
+                        timeout=8,
+                    )
+                except asyncio.TimeoutError as exc:
+                    raise RuntimeError("Discord demorou ao atribuir o cargo do top 1") from exc
+                except discord.Forbidden as exc:
+                    raise RuntimeError("Discord recusou a atribuição do cargo do top 1") from exc
+                except discord.HTTPException as exc:
+                    raise RuntimeError(
+                        "Discord não respondeu à atribuição do cargo do top 1"
+                    ) from exc
+
     async def _deposit_ranking_message(self, member: discord.Member) -> str:
         result = await self._sync_deposit_roles_on_bot_loop(
             str(member.id),
@@ -1134,19 +1241,16 @@ class DiscordBridge:
 
     async def _deposit_leaderboard_embeds(self) -> list[discord.Embed]:
         summaries = await self._fetch_all_deposit_summaries()
-        top_summaries = sorted(
-            (
-                summary
-                for summary in summaries
-                if str(summary[0]) not in EXCLUDED_DEPOSIT_RANKING_IDS
-            ),
-            key=lambda summary: (summary[1], summary[0]),
-            reverse=True,
-        )[:10]
+        ranked_summaries = eligible_deposit_ranking_summaries(summaries)
+        top_summaries = ranked_summaries[:10]
         if not top_summaries:
             return []
 
         guild = self._guild_on_bot_loop()
+        try:
+            await self._sync_top_deposit_ranking_role(top_summaries[0][0])
+        except (RuntimeError, httpx.HTTPError) as exc:
+            logger.warning("Não foi possível sincronizar o cargo do top 1: %s", exc)
         profiles = await asyncio.gather(
             *(
                 self._deposit_leaderboard_profile(guild, discord_id)
@@ -1183,9 +1287,17 @@ class DiscordBridge:
 
     async def _reconcile_deposit_roles_loop(self) -> None:
         while True:
-            await asyncio.sleep(settings.deposit_role_sync_interval_seconds)
             try:
-                for discord_id, amount in await self._fetch_all_deposit_summaries():
+                summaries = await self._fetch_all_deposit_summaries()
+                ranked_summaries = eligible_deposit_ranking_summaries(summaries)
+                try:
+                    await self._sync_top_deposit_ranking_role(
+                        ranked_summaries[0][0] if ranked_summaries else None
+                    )
+                except (RuntimeError, httpx.HTTPError) as exc:
+                    logger.warning("Não foi possível sincronizar o cargo do top 1: %s", exc)
+
+                for discord_id, amount in summaries:
                     try:
                         await self._sync_deposit_roles_on_bot_loop(
                             discord_id,
@@ -1199,6 +1311,7 @@ class DiscordBridge:
                 raise
             except Exception:
                 logger.exception("Falha na reconciliação do ranking de depósitos")
+            await asyncio.sleep(settings.deposit_role_sync_interval_seconds)
 
     def _register_commands(self) -> None:
         command_guild_id = settings.discord_guild_id or settings.discord_command_guild_id

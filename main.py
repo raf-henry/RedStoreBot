@@ -46,6 +46,12 @@ PUBLIC_SITE_HOSTS = {"redbuxx.com.br", "www.redbuxx.com.br"}
 LIVE_COMMAND_OWNER_ID = 385106984522743819
 LIVE_ANNOUNCEMENT_CHANNEL_ID = 1541592129644535828
 TIKTOK_PROFILE_URL = "https://www.tiktok.com/@.redlocker"
+EXCLUDED_DEPOSIT_RANKING_IDS = frozenset(
+    {
+        "385106984522743819",
+        "418446977349451777",
+    }
+)
 
 
 def configured_site_url() -> str:
@@ -1129,7 +1135,11 @@ class DiscordBridge:
     async def _deposit_leaderboard_embeds(self) -> list[discord.Embed]:
         summaries = await self._fetch_all_deposit_summaries()
         top_summaries = sorted(
-            summaries,
+            (
+                summary
+                for summary in summaries
+                if str(summary[0]) not in EXCLUDED_DEPOSIT_RANKING_IDS
+            ),
             key=lambda summary: (summary[1], summary[0]),
             reverse=True,
         )[:10]

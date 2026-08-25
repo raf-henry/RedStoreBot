@@ -45,6 +45,7 @@ DEFAULT_PUBLIC_SITE_URL = "https://redbuxx.com.br"
 PUBLIC_SITE_HOSTS = {"redbuxx.com.br", "www.redbuxx.com.br"}
 LIVE_COMMAND_OWNER_ID = 385106984522743819
 LIVE_ANNOUNCEMENT_CHANNEL_ID = 1541592129644535828
+LIVE_NOTIFICATION_ROLE_ID = 1541951746988052511
 TIKTOK_PROFILE_URL = "https://www.tiktok.com/@.redlocker"
 DEPOSIT_TOP_RANKING_ROLE_ID = 1541798809481384018
 EXCLUDED_DEPOSIT_RANKING_IDS = frozenset(
@@ -1383,6 +1384,7 @@ class DiscordBridge:
 
             try:
                 await live_channel.send(
+                    f"<@&{LIVE_NOTIFICATION_ROLE_ID}>\n"
                     "🔴 **Estou ao vivo no TikTok!**\n\n"
                     f"Vem acompanhar a live: {TIKTOK_PROFILE_URL}"
                 )

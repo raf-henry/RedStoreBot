@@ -1408,6 +1408,19 @@ class DiscordBridge:
                 return
 
             try:
+                await live_channel.purge(
+                    limit=None,
+                    reason="Atualização da divulgação da live",
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                await ctx.followup.send(
+                    "Não consegui limpar as mensagens anteriores nesse canal. "
+                    "Verifique se o bot tem as permissões de ler o histórico e gerenciar mensagens.",
+                    ephemeral=True,
+                )
+                return
+
+            try:
                 await live_channel.send(
                     "🔴 **Estou ao vivo no TikTok!**\n\n"
                     f"Vem acompanhar a live: {TIKTOK_PROFILE_URL}\n\n"

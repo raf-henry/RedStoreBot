@@ -60,7 +60,9 @@ por conferir os depósitos. A notificação informa o usuário e o valor solicit
 
 O comando `/live` divulga a live do TikTok no canal de ID `1541592129644535828` e só
 pode ser usado pelo usuário Discord de ID `385106984522743819`. O link divulgado é
-`https://www.tiktok.com/@.redlocker`.
+`https://www.tiktok.com/@.redlocker`. Ao executar o comando, o bot limpa as mensagens
+anteriores desse canal e publica somente a divulgação atual; por isso precisa das
+permissões `Read Message History`, `Manage Messages` e `Send Messages` nele.
 
 O comando `/rank` (e `!rank`) mostra os depósitos confirmados do usuário e
 sincroniza automaticamente seu cargo conforme a progressão abaixo. O comando

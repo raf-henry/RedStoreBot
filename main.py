@@ -21,7 +21,7 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Awaitable, Callable, Literal, Sequence
 from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
@@ -113,6 +113,31 @@ def calculate_robux(
         Decimal("0.01"), rounding="ROUND_DOWN"
     )
     return robux, price, money, spent, money - spent
+
+
+def parse_robux_quantity(value: str | int) -> int:
+    """Converte uma quantidade de Robux em inteiro, aceitando separadores de milhar."""
+    normalized = str(value).strip().replace(" ", "").replace(".", "").replace(",", "")
+    if not normalized.isdigit():
+        raise ValueError("A quantidade de Robux precisa ser um número inteiro.")
+    robux = int(normalized)
+    if robux <= 0:
+        raise ValueError("A quantidade de Robux precisa ser maior que zero.")
+    return robux
+
+
+def calculate_robux_price_per_thousand(
+    robux_quantity: str | int,
+    total_money: str,
+) -> tuple[int, Decimal, Decimal]:
+    """Calcula quanto custa proporcionalmente cada 1.000 Robux."""
+    robux = parse_robux_quantity(robux_quantity)
+    money = parse_amount(total_money)
+    price_per_thousand = (money / Decimal(robux) * Decimal("1000")).quantize(
+        Decimal("0.01"),
+        rounding=ROUND_HALF_UP,
+    )
+    return robux, money, price_per_thousand
 
 
 def normalize_currency(value: str) -> str:
@@ -1623,6 +1648,68 @@ class DiscordBridge:
                 f"aproximadamente **{format_robux(quote['robux'])} Robux**. "
                 f"Sobra equivalente: **{format_currency(quote['remainder'], quote['price_currency'])}**."
                 f"{conversion_text}"
+            )
+
+        @self.bot.slash_command(
+            name="valork",
+            description="Calcula o valor de 1K Robux a partir de uma venda",
+            guild_ids=command_guild_ids,
+        )
+        async def valork_slash(
+            ctx: discord.ApplicationContext,
+            robux: int = discord.Option(
+                int,
+                "Quantidade de Robux (ex.: 1429)",
+            ),
+            reais: str = discord.Option(
+                str,
+                "Valor recebido em reais (ex.: 45,00)",
+            ),
+        ) -> None:
+            try:
+                robux_quantity, money, price_per_thousand = calculate_robux_price_per_thousand(
+                    robux,
+                    reais,
+                )
+            except (ArithmeticError, ValueError):
+                await ctx.respond(
+                    "Informe uma quantidade de Robux maior que zero e um valor em reais válido. "
+                    "Exemplo: `/valork robux:1429 reais:45`.",
+                    ephemeral=True,
+                )
+                return
+
+            await ctx.respond(
+                "🧮 **Valor do 1K Robux**\n"
+                f"{format_robux(robux_quantity)} Robux por {format_currency(money, 'BRL')} "
+                f"= **{format_currency(price_per_thousand, 'BRL')} por 1K Robux**"
+            )
+
+        @self.bot.command(name="valork")
+        async def valork_prefix(ctx: commands.Context, *, argumentos: str = "") -> None:
+            valores = argumentos.split()
+            if len(valores) != 2:
+                await ctx.reply(
+                    "Uso: `!valork <quantidade de Robux> <valor em reais>`. "
+                    "Exemplo: `!valork 1429 45`."
+                )
+                return
+            try:
+                robux_quantity, money, price_per_thousand = calculate_robux_price_per_thousand(
+                    valores[0],
+                    valores[1],
+                )
+            except (ArithmeticError, ValueError):
+                await ctx.reply(
+                    "Informe uma quantidade de Robux maior que zero e um valor em reais válido. "
+                    "Exemplo: `!valork 1429 45`."
+                )
+                return
+
+            await ctx.reply(
+                "🧮 **Valor do 1K Robux**\n"
+                f"{format_robux(robux_quantity)} Robux por {format_currency(money, 'BRL')} "
+                f"= **{format_currency(price_per_thousand, 'BRL')} por 1K Robux**"
             )
 
         if settings.ticket_enabled:

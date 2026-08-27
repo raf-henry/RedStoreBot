@@ -13,7 +13,7 @@ Backend que conecta o site RedStore ao servidor Discord. Ele executa a API web/O
 - Consulta de presença e cargos no servidor configurado.
 - API interna protegida pelo header `X-RedStore-Api-Key`.
 - API para adicionar/remover cargos, com checagem da hierarquia do bot.
-- Comandos `/ping`, `/live`, `/site`, `/verificar`, `/rank`, `/ranking` e `/robux` (também com prefixo quando aplicável).
+- Comandos `/ping`, `/live`, `/site`, `/verificar`, `/rank`, `/ranking`, `/robux` e `/valork` (também com prefixo quando aplicável).
 - Sistema de tickets com painel, abertura de canal privado, assumir, notificar, renomear, fechar e logs.
 - Comandos `!prova` e `/prova` para entregadores publicarem a prova da entrega.
 - Endpoint `/health` para monitoramento.
@@ -137,6 +137,15 @@ Use `/robux` informando o preço de 1.000 Robux, o dinheiro disponível e a moed
 ```
 
 Também é possível usar `!robux 5,00 20,00 real real` ou `!robux 2,00 50,00 dolar real`. Quando as moedas forem diferentes, o bot consulta a PTAX do Banco Central, converte o orçamento e informa a cotação utilizada. O resultado é arredondado para baixo para não ultrapassar o orçamento.
+
+Para descobrir quanto vale 1K Robux a partir de uma venda, use `/valork` ou `!valork`:
+
+```text
+/valork robux:1429 reais:45
+!valork 1429 45
+```
+
+Nesse exemplo, o bot informa aproximadamente **R$ 31,49 por 1K Robux**.
 
 ## Fluxo do site
 

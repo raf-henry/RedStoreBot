@@ -1761,11 +1761,22 @@ class DiscordBridge:
         )
         async def prova_slash(
             ctx: discord.ApplicationContext,
-            cliente: discord.Member = discord.Option(discord.Member, "Cliente"),
             produto: str = discord.Option(str, "Produto"),
             imagem: discord.Attachment = discord.Option(
                 discord.Attachment,
                 "Imagem da prova entregue",
+            ),
+            cliente: discord.Member | None = discord.Option(
+                discord.Member,
+                "Cliente (opcional)",
+                required=False,
+                default=None,
+            ),
+            cliente_nick: str | None = discord.Option(
+                str,
+                "Nick do cliente (sem mencionar)",
+                required=False,
+                default=None,
             ),
             imagem_2: discord.Attachment | None = discord.Option(
                 discord.Attachment,
@@ -1858,7 +1869,7 @@ class DiscordBridge:
                 )
                 return
             await ctx.respond("Publicando prova...", ephemeral=True)
-            await self.publish_proof(destination, cliente, produto, imagens)
+            await self.publish_proof(destination, cliente, produto, imagens, cliente_nick)
 
         @self.bot.command(name="prova")
         async def prova(ctx: commands.Context, *, argumentos: str = "") -> None:
@@ -1941,13 +1952,15 @@ class DiscordBridge:
     async def publish_proof(
         self,
         destination: discord.abc.Messageable,
-        cliente: discord.Member,
+        cliente: discord.Member | None,
         produto: str,
         imagens: Sequence[discord.Attachment],
+        cliente_nick: str | None = None,
     ) -> None:
         if not imagens:
             raise ValueError("A prova precisa ter pelo menos uma imagem.")
 
+        cliente_nick = (cliente_nick or "").strip()
         numero = await self._next_sale_number(destination)
         horario = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%H:%M")
         rotulo_imagens = "imagem" if len(imagens) == 1 else "imagens"
@@ -1956,7 +1969,17 @@ class DiscordBridge:
             description="Obrigado pela preferência! 🏅",
             color=discord.Color.gold(),
         )
-        embed_principal.add_field(name="Cliente", value=cliente.mention, inline=False)
+        embed_principal.add_field(
+            name="Cliente",
+            value=(
+                cliente_nick[:1024]
+                if cliente_nick
+                else cliente.mention
+                if cliente
+                else "Não marcado (cliente não está no Discord)"
+            ),
+            inline=False,
+        )
         embed_principal.add_field(name="Produto", value=produto[:1024], inline=False)
         embed_principal.set_image(url=imagens[0].url)
         embed_principal.set_footer(text=f"Hoje às {horario} • {len(imagens)} {rotulo_imagens}")
@@ -1975,13 +1998,15 @@ class DiscordBridge:
             await destination.send(
                 content=(
                     cliente.mention
-                    if primeira_mensagem
+                    if primeira_mensagem and cliente and not cliente_nick
                     else f"Continuação da prova da Venda #{numero}"
+                    if not primeira_mensagem
+                    else None
                 ),
                 embeds=lote,
                 allowed_mentions=(
                     discord.AllowedMentions(users=[cliente])
-                    if primeira_mensagem
+                    if primeira_mensagem and cliente and not cliente_nick
                     else discord.AllowedMentions.none()
                 ),
             )

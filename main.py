@@ -2148,13 +2148,6 @@ class DiscordBridge:
             return True
         return any(role.id in self._ticket_staff_role_ids() for role in member.roles)
 
-    def _is_ticket_owner_or_staff(
-        self,
-        member: discord.Member | discord.User,
-        data: dict[str, Any],
-    ) -> bool:
-        return member.id == data["user_id"] or self._has_ticket_staff_access(member)
-
     def _find_open_ticket(
         self,
         guild: discord.Guild,
@@ -2372,7 +2365,7 @@ class DiscordBridge:
         if not data:
             await interaction.response.send_message("Este canal não é um ticket válido.", ephemeral=True)
             return
-        if not self._is_ticket_owner_or_staff(interaction.user, data):
+        if not self._has_ticket_staff_access(interaction.user):
             await interaction.response.send_message("Sem permissão para fechar este ticket.", ephemeral=True)
             return
         if interaction.channel.id in self._ticket_closing:

@@ -48,6 +48,8 @@ LIVE_ANNOUNCEMENT_CHANNEL_ID = 1541592129644535828
 LIVE_NOTIFICATION_ROLE_ID = 1541951746988052511
 TIKTOK_PROFILE_URL = "https://www.tiktok.com/@.redlocker"
 DEPOSIT_TOP_RANKING_ROLE_ID = 1541798809481384018
+# Cargo adicional autorizado a visualizar e assumir tickets.
+DEFAULT_TICKET_SUPPORT_ROLE_ID = 1536139670205759558
 EXCLUDED_DEPOSIT_RANKING_IDS = frozenset(
     {
         "385106984522743819",
@@ -214,8 +216,13 @@ class Settings:
     require_guild_membership: bool = False
     ticket_enabled: bool = os.getenv("TICKET_ENABLED", "true").lower() != "false"
     ticket_category_id: int = int(os.getenv("TICKET_CATEGORY_ID", "0") or 0)
-    ticket_support_role_ids: tuple[int, ...] = parse_id_list(
-        os.getenv("TICKET_SUPPORT_ROLE_IDS", "")
+    ticket_support_role_ids: tuple[int, ...] = tuple(
+        dict.fromkeys(
+            (
+                *parse_id_list(os.getenv("TICKET_SUPPORT_ROLE_IDS", "")),
+                DEFAULT_TICKET_SUPPORT_ROLE_ID,
+            )
+        )
     )
     ticket_master_role_id: int = int(os.getenv("TICKET_MASTER_ROLE_ID", "0") or 0)
     ticket_log_channel_id: int = int(os.getenv("TICKET_LOG_CHANNEL_ID", "0") or 0)
@@ -829,6 +836,7 @@ class DiscordBridge:
         self._ticket_closing: set[int] = set()
         self._ticket_views_registered = False
         self._legacy_ticket_topics_migrated = False
+        self._ticket_permissions_synchronized = False
         self._proof_number_lock = asyncio.Lock()
         self._deposit_review_in_flight: set[int] = set()
         self._deposit_role_sync_task: asyncio.Task[None] | None = None
@@ -1364,6 +1372,9 @@ class DiscordBridge:
             if settings.ticket_enabled and not self._legacy_ticket_topics_migrated:
                 await self._migrate_legacy_ticket_topics()
                 self._legacy_ticket_topics_migrated = True
+            if settings.ticket_enabled and not self._ticket_permissions_synchronized:
+                await self._synchronize_ticket_permissions()
+                self._ticket_permissions_synchronized = True
             if self._deposit_role_sync_task is None or self._deposit_role_sync_task.done():
                 self._deposit_role_sync_task = asyncio.create_task(
                     self._reconcile_deposit_roles_loop(),
@@ -2077,15 +2088,65 @@ class DiscordBridge:
             except discord.HTTPException:
                 logger.warning("Não foi possível limpar o tópico do ticket %s", channel.id)
 
+    def _ticket_staff_role_ids(self) -> set[int]:
+        role_ids = set(settings.ticket_support_role_ids)
+        if settings.ticket_master_role_id:
+            role_ids.add(settings.ticket_master_role_id)
+        return role_ids
+
+    async def _synchronize_ticket_permissions(self) -> None:
+        guild = self.bot.get_guild(settings.discord_guild_id) if settings.discord_guild_id else None
+        if guild is None or not settings.ticket_category_id:
+            return
+
+        support_roles = [
+            role
+            for role_id in self._ticket_staff_role_ids()
+            if (role := guild.get_role(role_id)) is not None
+        ]
+        if not support_roles:
+            return
+
+        for channel in guild.text_channels:
+            if channel.category_id != settings.ticket_category_id:
+                continue
+            if not self._ticket_data_from_channel(channel):
+                continue
+            for role in support_roles:
+                overwrite = channel.overwrites_for(role)
+                if (
+                    overwrite.view_channel is True
+                    and overwrite.send_messages is True
+                    and overwrite.read_message_history is True
+                ):
+                    continue
+                try:
+                    await channel.set_permissions(
+                        role,
+                        view_channel=True,
+                        send_messages=True,
+                        read_message_history=True,
+                        reason="Sincronizar acesso da equipe aos tickets",
+                    )
+                except discord.Forbidden:
+                    logger.warning(
+                        "Sem permissão para liberar o cargo %s no ticket %s",
+                        role.id,
+                        channel.id,
+                    )
+                except discord.HTTPException:
+                    logger.warning(
+                        "Não foi possível sincronizar o cargo %s no ticket %s",
+                        role.id,
+                        channel.id,
+                    )
+
     def _has_ticket_staff_access(self, member: discord.Member | discord.User) -> bool:
         if not isinstance(member, discord.Member):
             return False
         if member.guild_permissions.manage_channels:
             return True
-        role_ids = set(settings.ticket_support_role_ids)
-        if settings.ticket_master_role_id:
-            role_ids.add(settings.ticket_master_role_id)
-        return any(role.id in role_ids for role in member.roles)
+        return any(role.id in self._ticket_staff_role_ids() for role in member.roles)
 
     def _is_ticket_owner_or_staff(
         self,
@@ -2146,9 +2207,7 @@ class DiscordBridge:
             )
             return
 
-        support_role_ids = set(settings.ticket_support_role_ids)
-        if settings.ticket_master_role_id:
-            support_role_ids.add(settings.ticket_master_role_id)
+        support_role_ids = self._ticket_staff_role_ids()
         overwrites: dict[discord.abc.Snowflake, discord.PermissionOverwrite] = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
             interaction.user: discord.PermissionOverwrite(

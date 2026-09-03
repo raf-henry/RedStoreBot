@@ -13,7 +13,7 @@ Backend que conecta o site RedStore ao servidor Discord. Ele executa a API web/O
 - Consulta de presença e cargos no servidor configurado.
 - API interna protegida pelo header `X-RedStore-Api-Key`.
 - API para adicionar/remover cargos, com checagem da hierarquia do bot.
-- Comandos `/ping`, `/live`, `/site`, `/verificar`, `/rank`, `/ranking`, `/robux` e `/valork` (também com prefixo quando aplicável).
+- Comandos `/ping`, `/live`, `/site`, `/verificar`, `/rank`, `/ranking`, `/pix`, `/robux` e `/valork` (também com prefixo quando aplicável).
 - Sistema de tickets com painel, abertura de canal privado, assumir, notificar, renomear, fechar e logs.
 - Comandos `!prova` e `/prova` para entregadores publicarem a prova da entrega.
 - Endpoint `/health` para monitoramento.
@@ -69,6 +69,13 @@ sincroniza automaticamente seu cargo conforme a progressão abaixo. O comando
 `/ranking` (e `!ranking`) publica uma única mensagem com o top 10 de usuários com
 maior gasto, exibindo a menção do usuário, o cargo de depósito em texto e o total
 gasto, sem ID do Discord ou quantidade de compras.
+
+O comando `/pix valor: cliente:` só pode ser usado pelo usuário Discord de ID
+`38510698452274381` e dentro de um ticket aberto. O cliente informado precisa ser
+o dono do ticket. A cobrança é registrada como Pix confirmado no backend e entra
+no `/rank` e no `/ranking`, com proteção contra duplicidade; ela não adiciona saldo
+utilizável na conta do site. O Pix copia e cola pode ser substituído por
+`PIX_COPIA_E_COLA` no ambiente.
 
 | Cargo | A partir de | ID |
 | --- | ---: | --- |

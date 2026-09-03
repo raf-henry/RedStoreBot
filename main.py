@@ -47,6 +47,12 @@ LIVE_COMMAND_OWNER_ID = 385106984522743819
 LIVE_ANNOUNCEMENT_CHANNEL_ID = 1541592129644535828
 LIVE_NOTIFICATION_ROLE_ID = 1541951746988052511
 TIKTOK_PROFILE_URL = "https://www.tiktok.com/@.redlocker"
+PIX_COMMAND_OWNER_ID = 38510698452274381
+DEFAULT_PIX_COPY_PASTE = (
+    "00020126580014br.gov.bcb.pix01364fbb06f0-bcde-4abb-a720-9bc50945df2f"
+    "5204000053039865802BR5925Henry Rafael Bonfim Cardo6009Sao Paulo62290525"
+    "REC6A79679D8CFA42554425386304E7C7"
+)
 DEPOSIT_TOP_RANKING_ROLE_ID = 1541798809481384018
 # Cargo adicional autorizado a visualizar e assumir tickets.
 DEFAULT_TICKET_SUPPORT_ROLE_ID = 1536139670205759558
@@ -229,6 +235,7 @@ class Settings:
     ticket_close_delay_seconds: int = max(
         0, int(os.getenv("TICKET_CLOSE_DELAY_SECONDS", "10") or 10)
     )
+    pix_copy_paste: str = os.getenv("PIX_COPIA_E_COLA", "").strip() or DEFAULT_PIX_COPY_PASTE
     deliverer_role_id: int = int(os.getenv("DELIVERER_ROLE_ID", "0") or 0)
     deliverer_role_name: str = os.getenv("DELIVERER_ROLE_NAME", "Entregador")
     proof_channel_id: int = int(os.getenv("PROOF_CHANNEL_ID", "0") or 0)
@@ -1001,6 +1008,46 @@ class DiscordBridge:
             summaries.append((str(item["discordId"]), amount))
         return summaries
 
+    async def _register_discord_pix_charge(
+        self,
+        discord_id: str,
+        amount: Decimal,
+        ticket_channel_id: str,
+        charged_by_discord_id: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        if not settings.redstore_bridge_api_key:
+            raise RuntimeError("REDSTORE_BRIDGE_API_KEY não está configurada")
+        endpoint = f"{settings.redstore_api_url.rstrip('/')}/api/internal/discord/pix"
+        payload = {
+            "discordId": discord_id,
+            "amount": str(amount),
+            "ticketChannelId": ticket_channel_id,
+            "chargedByDiscordId": charged_by_discord_id,
+            "idempotencyKey": idempotency_key,
+        }
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(
+                endpoint,
+                json=payload,
+                headers={"X-Discord-Bridge-Key": settings.redstore_bridge_api_key},
+            )
+        if response.is_error:
+            detail = "O backend recusou a cobrança Pix."
+            try:
+                body = response.json()
+                detail = body.get("message") or body.get("detail") or detail
+            except (ValueError, TypeError):
+                pass
+            raise RuntimeError(detail)
+        try:
+            result = response.json()
+        except ValueError as exc:
+            raise RuntimeError("A resposta do backend para a cobrança Pix é inválida.") from exc
+        if not isinstance(result, dict) or not result.get("transactionCode"):
+            raise RuntimeError("A resposta do backend para a cobrança Pix é inválida.")
+        return result
+
     async def _sync_deposit_roles_on_bot_loop(
         self,
         discord_id: str,
@@ -1764,6 +1811,123 @@ class DiscordBridge:
                 )
                 embed.set_footer(text="Sistema de Tickets • RedStore")
                 await ctx.respond(embed=embed, view=TicketPanelView(self))
+
+            @self.bot.slash_command(
+                name="pix",
+                description="Cobra um Pix no ticket e contabiliza o valor no ranking",
+                guild_ids=command_guild_ids,
+            )
+            async def pix(
+                ctx: discord.ApplicationContext,
+                valor: str = discord.Option(str, "Valor em reais (ex.: 25,00)"),
+                cliente: discord.Member = discord.Option(
+                    discord.Member,
+                    "Cliente deste ticket",
+                ),
+            ) -> None:
+                if ctx.author.id != PIX_COMMAND_OWNER_ID:
+                    await ctx.respond(
+                        "Apenas o administrador autorizado pode usar este comando.",
+                        ephemeral=True,
+                    )
+                    return
+                if ctx.guild is None or not isinstance(ctx.channel, discord.TextChannel):
+                    await ctx.respond(
+                        "Este comando só pode ser usado dentro de um ticket do servidor.",
+                        ephemeral=True,
+                    )
+                    return
+
+                ticket_data = self._ticket_data_from_channel(ctx.channel)
+                if not ticket_data or ticket_data["state"] != "open":
+                    await ctx.respond(
+                        "Este comando só pode ser usado em um ticket aberto.",
+                        ephemeral=True,
+                    )
+                    return
+                if ticket_data["user_id"] != cliente.id:
+                    await ctx.respond(
+                        "O cliente informado precisa ser o dono deste ticket.",
+                        ephemeral=True,
+                    )
+                    return
+
+                try:
+                    amount = parse_amount(valor).quantize(
+                        Decimal("0.01"),
+                        rounding="ROUND_UNNECESSARY",
+                    )
+                except (ArithmeticError, ValueError):
+                    await ctx.respond(
+                        "Informe um valor válido com no máximo duas casas decimais. "
+                        "Exemplo: `/pix valor:25,00 cliente:@cliente`.",
+                        ephemeral=True,
+                    )
+                    return
+
+                interaction_id = getattr(getattr(ctx, "interaction", None), "id", None)
+                if not interaction_id:
+                    await ctx.respond(
+                        "Não foi possível identificar esta cobrança. Tente novamente.",
+                        ephemeral=True,
+                    )
+                    return
+
+                await ctx.defer()
+                try:
+                    charge = await self._register_discord_pix_charge(
+                        discord_id=str(cliente.id),
+                        amount=amount,
+                        ticket_channel_id=str(ctx.channel.id),
+                        charged_by_discord_id=str(ctx.author.id),
+                        idempotency_key=f"discord-pix-{interaction_id}",
+                    )
+                except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+                    logger.warning(
+                        "Não foi possível registrar cobrança Pix no ticket %s: %s",
+                        ctx.channel.id,
+                        exc,
+                    )
+                    await ctx.followup.send(
+                        "Não foi possível registrar esta cobrança no ranking. "
+                        "Confira a conexão com o RedStore e tente novamente.",
+                        ephemeral=True,
+                    )
+                    return
+
+                already_recorded = bool(charge.get("alreadyRecorded"))
+                embed = discord.Embed(
+                    title="💸 Cobrança via Pix" if not already_recorded else "💸 Pix já registrado",
+                    description=(
+                        f"{cliente.mention}, faça o Pix usando os dados abaixo e envie o comprovante neste ticket."
+                    ),
+                    color=discord.Color.green(),
+                )
+                embed.add_field(
+                    name="Valor",
+                    value=f"**{format_currency(amount, 'BRL')}**",
+                    inline=False,
+                )
+                embed.add_field(
+                    name="Pix copia e cola",
+                    value=f"`{settings.pix_copy_paste}`",
+                    inline=False,
+                )
+                embed.add_field(
+                    name="Registro",
+                    value=(
+                        f"Cobrança **{charge.get('transactionCode', 'PIX-DISCORD')}** registrada e contabilizada no `/ranking`."
+                        if not already_recorded
+                        else "Esta interação já havia sido registrada; o valor não foi somado novamente."
+                    ),
+                    inline=False,
+                )
+                embed.set_footer(text="Após o pagamento, envie o comprovante neste ticket.")
+                await ctx.followup.send(
+                    content=cliente.mention,
+                    embed=embed,
+                    allowed_mentions=discord.AllowedMentions(users=[cliente]),
+                )
 
         @self.bot.slash_command(
             name="prova",

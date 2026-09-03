@@ -1,6 +1,6 @@
-# RedStore Discord Bridge
+# RedBuxx Discord Bridge
 
-Backend que conecta o site RedStore ao servidor Discord. Ele executa a API web/OAuth2 e o bot Discord no mesmo processo.
+Backend que conecta o site RedBuxx ao servidor Discord. Ele executa a API web/OAuth2 e o bot Discord no mesmo processo.
 
 ## O que já está incluído
 
@@ -9,7 +9,7 @@ Backend que conecta o site RedStore ao servidor Discord. Ele executa a API web/O
 - Proteção contra CSRF no login com `state` assinado e expirável.
 - Sessão HTTP em cookie `HttpOnly`, `SameSite=Lax` e opção `Secure`.
 - Registro local da conta Discord e do e-mail vinculado em SQLite.
-- Provisionamento da conta principal do RedStore com JWT, e-mail e avatar do Discord.
+- Provisionamento da conta principal do RedBuxx com JWT, e-mail e avatar do Discord.
 - Consulta de presença e cargos no servidor configurado.
 - API interna protegida pelo header `X-RedStore-Api-Key`.
 - API para adicionar/remover cargos, com checagem da hierarquia do bot.
@@ -179,7 +179,7 @@ O frontend pode consultar o usuário autenticado com `GET /api/v1/me`, enviando 
 
 ## API interna
 
-As chamadas do backend do RedStore devem enviar:
+As chamadas do backend do RedBuxx devem enviar:
 
 ```http
 X-RedStore-Api-Key: valor-de-INTERNAL_API_KEY
@@ -204,6 +204,6 @@ Exemplo de alteração de cargo:
 
 ## Produção
 
-Defina `ENVIRONMENT=production`. Nesse modo, a aplicação recusa iniciar com credenciais ausentes, segredos padrão/fracos ou cookies sem `COOKIE_SECURE=true`. Use HTTPS, segredos aleatórios e uma URL pública de callback. Restrinja `CORS_ORIGINS` ao domínio real do RedStore e mantenha `.env` fora do controle de versão.
+Defina `ENVIRONMENT=production`. Nesse modo, a aplicação recusa iniciar com credenciais ausentes, segredos padrão/fracos ou cookies sem `COOKIE_SECURE=true`. Use HTTPS, segredos aleatórios e uma URL pública de callback. Restrinja `CORS_ORIGINS` ao domínio real do RedBuxx e mantenha `.env` fora do controle de versão.
 
 Execute somente um worker/processo desta aplicação em produção, porque cada processo inicia uma conexão própria com o Discord. Se precisar escalar a API, separe o bot em um serviço dedicado antes de usar múltiplos workers.

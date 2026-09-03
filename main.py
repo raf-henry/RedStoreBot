@@ -1,4 +1,4 @@
-"""RedStore Discord bridge.
+"""RedBuxx Discord bridge.
 
 Runs the web API/OAuth2 flow and the Discord bot in the same process.
 The website should use the OAuth endpoints for user login and the /api/v1
@@ -40,7 +40,7 @@ from pydantic import BaseModel, Field
 load_dotenv()
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-logger = logging.getLogger("redstore")
+logger = logging.getLogger("redbuxx")
 DEFAULT_DISCORD_GUILD_ID = "1535813395394330814"
 DEFAULT_PUBLIC_SITE_URL = "https://redbuxx.com.br"
 PUBLIC_SITE_HOSTS = {"redbuxx.com.br", "www.redbuxx.com.br"}
@@ -396,7 +396,7 @@ def utc_now() -> str:
 
 
 class UserStore:
-    """Small SQLite store for the Discord account linked to a RedStore user."""
+    """Small SQLite store for the Discord account linked to a RedBuxx user."""
 
     def __init__(self, path: str) -> None:
         self.connection = sqlite3.connect(path, check_same_thread=False)
@@ -652,13 +652,13 @@ class OAuthClient:
                 )
             return user
 
-    async def provision_redstore_user(
+    async def provision_redbuxx_user(
         self,
         discord_user: dict[str, Any],
         consent: dict[str, Any],
     ) -> dict[str, Any]:
         if not settings.redstore_bridge_api_key:
-            raise HTTPException(status_code=503, detail="Chave do bridge com o RedStore não configurada")
+            raise HTTPException(status_code=503, detail="Chave do bridge com o RedBuxx não configurada")
         if not discord_user.get("verified"):
             raise HTTPException(status_code=400, detail="A conta Discord precisa ter um e-mail verificado")
 
@@ -693,18 +693,18 @@ class OAuthClient:
                     headers={"X-Discord-Bridge-Key": settings.redstore_bridge_api_key},
                 )
         except httpx.RequestError as exc:
-            logger.exception("Não foi possível acessar a API principal do RedStore")
+            logger.exception("Não foi possível acessar a API principal do RedBuxx")
             raise HTTPException(
                 status_code=502,
                 detail="Aguarde um instante, o sistema está processando sua solicitação.",
             ) from exc
         if response.is_error:
-            backend_message = "Não foi possível registrar a conta no RedStore"
+            backend_message = "Não foi possível registrar a conta no RedBuxx"
             try:
                 backend_message = response.json().get("message") or response.json().get("detail") or backend_message
             except (ValueError, TypeError):
                 pass
-            logger.warning("Provisionamento Discord recusado pelo RedStore: %s", response.text)
+            logger.warning("Provisionamento Discord recusado pelo RedBuxx: %s", response.text)
             raise HTTPException(
                 status_code=response.status_code if 400 <= response.status_code < 500 else 502,
                 detail=backend_message,
@@ -1003,9 +1003,9 @@ class DiscordBridge:
         try:
             amount = Decimal(str(payload.get("confirmedAmount", "0")))
         except (ArithmeticError, TypeError, ValueError) as exc:
-            raise RuntimeError("O resumo de depósitos retornado pelo RedStore é inválido") from exc
+            raise RuntimeError("O resumo de depósitos retornado pelo RedBuxx é inválido") from exc
         if not amount.is_finite() or amount < 0:
-            raise RuntimeError("O resumo de depósitos retornado pelo RedStore é inválido")
+            raise RuntimeError("O resumo de depósitos retornado pelo RedBuxx é inválido")
         return amount
 
     async def _fetch_deposit_summary(self, deposit_id: int) -> tuple[str | None, Decimal]:
@@ -1025,9 +1025,9 @@ class DiscordBridge:
         try:
             amount = Decimal(str(payload.get("confirmedAmount", "0")))
         except (ArithmeticError, TypeError, ValueError) as exc:
-            raise RuntimeError("O resumo de depósitos retornado pelo RedStore é inválido") from exc
+            raise RuntimeError("O resumo de depósitos retornado pelo RedBuxx é inválido") from exc
         if not amount.is_finite() or amount < 0:
-            raise RuntimeError("O resumo de depósitos retornado pelo RedStore é inválido")
+            raise RuntimeError("O resumo de depósitos retornado pelo RedBuxx é inválido")
         discord_id = payload.get("discordId")
         return (str(discord_id) if discord_id else None), amount
 
@@ -1043,7 +1043,7 @@ class DiscordBridge:
             response.raise_for_status()
             payload = response.json()
         if not isinstance(payload, list):
-            raise RuntimeError("A lista de depósitos retornada pelo RedStore é inválida")
+            raise RuntimeError("A lista de depósitos retornada pelo RedBuxx é inválida")
 
         summaries: list[tuple[str, Decimal]] = []
         for item in payload:
@@ -1052,9 +1052,9 @@ class DiscordBridge:
             try:
                 amount = Decimal(str(item.get("confirmedAmount", "0")))
             except (ArithmeticError, TypeError, ValueError) as exc:
-                raise RuntimeError("A lista de depósitos retornada pelo RedStore é inválida") from exc
+                raise RuntimeError("A lista de depósitos retornada pelo RedBuxx é inválida") from exc
             if not amount.is_finite() or amount < 0:
-                raise RuntimeError("A lista de depósitos retornada pelo RedStore é inválida")
+                raise RuntimeError("A lista de depósitos retornada pelo RedBuxx é inválida")
             summaries.append((str(item["discordId"]), amount))
         return summaries
 
@@ -1149,6 +1149,7 @@ class DiscordBridge:
                 title = "✅ Depósito Pix confirmado"
                 color = discord.Color.green()
                 footer = "Depósito confirmado pelo administrador autorizado."
+                result_message = "✅ Pix confirmado!"
                 remove_pix_details = True
             else:
                 view.state = "cancelled"
@@ -1156,7 +1157,8 @@ class DiscordBridge:
                 title = "❌ Cobrança Pix cancelada"
                 color = discord.Color.red()
                 footer = "Cobrança cancelada pelo administrador autorizado."
-                remove_pix_details = False
+                result_message = "❌ Pix cancelado!"
+                remove_pix_details = True
 
             await self._update_pix_charge_message(
                 interaction,
@@ -1165,6 +1167,7 @@ class DiscordBridge:
                 color=color,
                 status_text=status_text,
                 footer=footer,
+                result_message=result_message,
                 remove_pix_details=remove_pix_details,
             )
         except (discord.HTTPException, httpx.HTTPError, RuntimeError, ValueError) as exc:
@@ -1181,7 +1184,7 @@ class DiscordBridge:
             await interaction.followup.send(
                 (
                     "Não foi possível confirmar o depósito no ranking. "
-                    "Confira a conexão com o RedStore e tente novamente."
+                    "Confira a conexão com o RedBuxx e tente novamente."
                     if action == "confirm"
                     else "Não foi possível cancelar esta cobrança. Tente novamente."
                 ),
@@ -1199,6 +1202,7 @@ class DiscordBridge:
         color: discord.Color,
         status_text: str,
         footer: str,
+        result_message: str,
         remove_pix_details: bool,
     ) -> None:
         message = interaction.message
@@ -1207,7 +1211,7 @@ class DiscordBridge:
         embed = message.embeds[0] if message.embeds else discord.Embed()
         embed.title = title
         embed.description = (
-            f"{view.client_mention}, ✅ Pix confirmado!"
+            f"{view.client_mention}, {result_message}"
             if remove_pix_details
             else f"{view.client_mention}, confira o status desta cobrança Pix abaixo."
         )
@@ -1221,7 +1225,7 @@ class DiscordBridge:
         embed.set_footer(text=footer)
         edit_kwargs: dict[str, Any] = {"embed": embed, "view": view}
         if remove_pix_details:
-            edit_kwargs["content"] = f"{view.client_mention} ✅ Pix confirmado!"
+            edit_kwargs["content"] = f"{view.client_mention} {result_message}"
             edit_kwargs["attachments"] = []
         await message.edit(**edit_kwargs)
         if remove_pix_details and view.pix_copy_message is not None:
@@ -1615,7 +1619,7 @@ class DiscordBridge:
 
         @self.bot.slash_command(
             name="ping",
-            description="Verifica se o RedStore está online",
+            description="Verifica se o RedBuxx está online",
             guild_ids=command_guild_ids,
         )
         async def ping(ctx: discord.ApplicationContext) -> None:
@@ -1682,11 +1686,11 @@ class DiscordBridge:
 
         @self.bot.slash_command(
             name="site",
-            description="Envia o link do RedStore",
+            description="Envia o link do RedBuxx",
             guild_ids=command_guild_ids,
         )
         async def site(ctx: discord.ApplicationContext) -> None:
-            await ctx.respond(f"Acesse o RedStore: {settings.site_url}", ephemeral=True)
+            await ctx.respond(f"Acesse o RedBuxx: {settings.site_url}", ephemeral=True)
 
         @self.bot.slash_command(
             name="verificar",
@@ -1700,12 +1704,12 @@ class DiscordBridge:
             linked_user = store.get(str(ctx.author.id))
             if not linked_user:
                 await ctx.respond(
-                    f"Sua conta ainda não está vinculada ao RedStore. Acesse {settings.site_url} para entrar.",
+                    f"Sua conta ainda não está vinculada ao RedBuxx. Acesse {settings.site_url} para entrar.",
                     ephemeral=True,
                 )
                 return
             roles = ", ".join(role.name for role in ctx.author.roles if role.name != "@everyone") or "nenhum"
-            await ctx.respond(f"Sua conta está vinculada ao RedStore. Cargos: {roles}", ephemeral=True)
+                await ctx.respond(f"Sua conta está vinculada ao RedBuxx. Cargos: {roles}", ephemeral=True)
 
         @self.bot.slash_command(
             name="rank",
@@ -1756,7 +1760,7 @@ class DiscordBridge:
 
         @self.bot.slash_command(
             name="ranking",
-            description="Mostra os 10 usuários com maior gasto no RedStore",
+            description="Mostra os 10 usuários com maior gasto no RedBuxx",
             guild_ids=command_guild_ids,
         )
         async def ranking(ctx: discord.ApplicationContext) -> None:
@@ -1983,7 +1987,7 @@ class DiscordBridge:
                 embed = discord.Embed(
                     title="🎫 CENTRAL DE ATENDIMENTO",
                     description=(
-                        "Olá! Seja bem-vindo à central de tickets do RedStore.\n\n"
+                        "Olá! Seja bem-vindo à central de tickets do RedBuxx.\n\n"
                         "Se você precisa de ajuda, tem dúvidas ou quer resolver uma situação, "
                         "abra um ticket pelo botão abaixo.\n\n"
                         "📌 **Antes de abrir:** explique o problema com clareza, evite spam e "
@@ -1995,7 +1999,7 @@ class DiscordBridge:
                     ),
                     color=discord.Color.dark_blue(),
                 )
-                embed.set_footer(text="Sistema de Tickets • RedStore")
+                embed.set_footer(text="Sistema de Tickets • RedBuxx")
                 await ctx.respond(embed=embed, view=TicketPanelView(self))
 
             @self.bot.slash_command(
@@ -2516,13 +2520,13 @@ class DiscordBridge:
         guild = interaction.guild
         if guild is None or not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message(
-                "Este botão só pode ser usado dentro do servidor do RedStore.",
+                "Este botão só pode ser usado dentro do servidor do RedBuxx.",
                 ephemeral=True,
             )
             return
         if settings.discord_guild_id and guild.id != settings.discord_guild_id:
             await interaction.response.send_message(
-                "Este painel pertence ao servidor oficial do RedStore.",
+                "Este painel pertence ao servidor oficial do RedBuxx.",
                 ephemeral=True,
             )
             return
@@ -2821,9 +2825,9 @@ class DiscordBridge:
         try:
             member = await guild.fetch_member(numeric_discord_id)
             if action == "add":
-                await member.add_roles(role, reason="Sincronização solicitada pelo RedStore")
+                await member.add_roles(role, reason="Sincronização solicitada pelo RedBuxx")
             else:
-                await member.remove_roles(role, reason="Sincronização solicitada pelo RedStore")
+                await member.remove_roles(role, reason="Sincronização solicitada pelo RedBuxx")
         except discord.NotFound as exc:
             raise HTTPException(status_code=404, detail="Usuário não está no servidor") from exc
         except discord.Forbidden as exc:
@@ -2947,9 +2951,9 @@ class DiscordBridge:
         try:
             member = await guild.fetch_member(int(discord_id))
             if action == "add":
-                await member.add_roles(role, reason="Sincronizacao solicitada pelo RedStore")
+                await member.add_roles(role, reason="Sincronizacao solicitada pelo RedBuxx")
             else:
-                await member.remove_roles(role, reason="Sincronizacao solicitada pelo RedStore")
+                await member.remove_roles(role, reason="Sincronizacao solicitada pelo RedBuxx")
         except discord.NotFound as exc:
             raise HTTPException(status_code=404, detail="Usuario nao esta no servidor") from exc
         except discord.Forbidden as exc:
@@ -3124,7 +3128,7 @@ class DiscordBridge:
             value=f"Acesse {settings.site_url} e realize a entrega.",
             inline=False,
         )
-        embed.set_footer(text="RedStore • fila de entregas")
+        embed.set_footer(text="RedBuxx • fila de entregas")
 
         try:
             await channel.send(
@@ -3388,7 +3392,7 @@ async def lifespan(_: FastAPI):
     proofs.close()
 
 
-app = FastAPI(title="RedStore Discord Bridge", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="RedBuxx Discord Bridge", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_origins),
@@ -3499,7 +3503,7 @@ async def discord_callback(request: Request, code: str | None = None, state: str
     if settings.require_guild_membership:
         membership = await bridge.member_snapshot(str(discord_user["id"]))
         if not membership["is_member"]:
-            raise HTTPException(status_code=403, detail="Você precisa estar no servidor do RedStore para continuar")
+            raise HTTPException(status_code=403, detail="Você precisa estar no servidor do RedBuxx para continuar")
     user = store.upsert(discord_user)
     provision_data: dict[str, Any] = {"flow": state_data.get("flow", "login")}
     if provision_data["flow"] == "register":
@@ -3515,7 +3519,7 @@ async def discord_callback(request: Request, code: str | None = None, state: str
     elif provision_data["flow"] == "link":
         provision_data["linkToken"] = state_data.get("linkToken")
     try:
-        provisioned_user = await oauth.provision_redstore_user(discord_user, provision_data)
+        provisioned_user = await oauth.provision_redbuxx_user(discord_user, provision_data)
     except HTTPException as exc:
         detail = exc.detail if isinstance(exc.detail, str) else "Não foi possível concluir a autenticação com Discord."
         error_url = f"{settings.site_url.rstrip('/')}/auth/discord/success?{urlencode({'error': detail, 'flow': provision_data['flow']})}"

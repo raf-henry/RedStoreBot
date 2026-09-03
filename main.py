@@ -1173,13 +1173,14 @@ class DiscordBridge:
                         " O depósito foi registrado, mas o cargo não pôde ser atualizado agora; "
                         "use `/rank` para tentar novamente."
                     )
-                elif role_result.get("is_member"):
-                    synced_tier = role_result.get("tier") or "Sem cargo"
-                    status_text += f" Cargo atualizado automaticamente: **{synced_tier}**."
                 else:
-                    status_text += (
-                        " O depósito foi registrado, mas o cliente não está no servidor para receber o cargo."
-                    )
+                    if role_result.get("is_member"):
+                        synced_tier = role_result.get("tier") or "Sem cargo"
+                        status_text += f" Cargo atualizado automaticamente: **{synced_tier}**."
+                    else:
+                        status_text += (
+                            " O depósito foi registrado, mas o cliente não está no servidor para receber o cargo."
+                        )
 
                 title = "✅ Depósito Pix confirmado"
                 color = discord.Color.green()

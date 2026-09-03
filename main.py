@@ -1853,10 +1853,13 @@ class DiscordBridge:
                     return
 
                 try:
-                    amount = parse_amount(valor).quantize(
+                    parsed_amount = parse_amount(valor)
+                    amount = parsed_amount.quantize(
                         Decimal("0.01"),
-                        rounding="ROUND_UNNECESSARY",
+                        rounding=ROUND_HALF_UP,
                     )
+                    if amount != parsed_amount:
+                        raise ValueError("O valor não pode ter mais de duas casas decimais.")
                 except (ArithmeticError, ValueError):
                     await ctx.respond(
                         "Informe um valor válido com no máximo duas casas decimais. "

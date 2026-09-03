@@ -1148,12 +1148,14 @@ class DiscordBridge:
                 title = "✅ Depósito Pix confirmado"
                 color = discord.Color.green()
                 footer = "Depósito confirmado pelo administrador autorizado."
+                remove_pix_details = True
             else:
                 view.state = "cancelled"
                 status_text = "Cobrança cancelada. Nenhum valor foi adicionado ao `/ranking`."
                 title = "❌ Cobrança Pix cancelada"
                 color = discord.Color.red()
                 footer = "Cobrança cancelada pelo administrador autorizado."
+                remove_pix_details = False
 
             await self._update_pix_charge_message(
                 interaction,
@@ -1162,6 +1164,7 @@ class DiscordBridge:
                 color=color,
                 status_text=status_text,
                 footer=footer,
+                remove_pix_details=remove_pix_details,
             )
         except (discord.HTTPException, httpx.HTTPError, RuntimeError, ValueError) as exc:
             view.state = "pending"
@@ -1195,6 +1198,7 @@ class DiscordBridge:
         color: discord.Color,
         status_text: str,
         footer: str,
+        remove_pix_details: bool,
     ) -> None:
         message = interaction.message
         if message is None:
@@ -1202,15 +1206,23 @@ class DiscordBridge:
         embed = message.embeds[0] if message.embeds else discord.Embed()
         embed.title = title
         embed.description = (
-            f"{view.client_mention}, confira o status desta cobrança Pix abaixo."
+            f"{view.client_mention}, ✅ Pix confirmado!"
+            if remove_pix_details
+            else f"{view.client_mention}, confira o status desta cobrança Pix abaixo."
         )
         embed.color = color
-        if len(embed.fields) >= 3:
-            embed.set_field_at(2, name="Registro", value=status_text, inline=False)
+        if remove_pix_details and len(embed.fields) >= 2:
+            embed.remove_field(1)
+        if embed.fields:
+            embed.set_field_at(len(embed.fields) - 1, name="Registro", value=status_text, inline=False)
         else:
             embed.add_field(name="Registro", value=status_text, inline=False)
         embed.set_footer(text=footer)
-        await message.edit(embed=embed, view=view)
+        edit_kwargs: dict[str, Any] = {"embed": embed, "view": view}
+        if remove_pix_details:
+            edit_kwargs["content"] = f"{view.client_mention} ✅ Pix confirmado!"
+            edit_kwargs["attachments"] = []
+        await message.edit(**edit_kwargs)
 
     async def _sync_deposit_roles_on_bot_loop(
         self,

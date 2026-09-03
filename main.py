@@ -1989,6 +1989,8 @@ class DiscordBridge:
                         "📌 **Antes de abrir:** explique o problema com clareza, evite spam e "
                         "aguarde a equipe responder.\n\n"
                         "📂 **Suporte disponível:** suporte geral, denúncias e dúvidas.\n\n"
+                        "💳 **Atendimento pelo Discord:** também fazemos o pagamento e a entrega por aqui. "
+                        "Se preferir, abra um ticket e aguarde nossa equipe.\n\n"
                         "⚠️ A abertura de tickets sem motivo pode resultar em punição."
                     ),
                     color=discord.Color.dark_blue(),

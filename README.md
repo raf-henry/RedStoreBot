@@ -71,9 +71,11 @@ maior gasto, exibindo a menção do usuário, o cargo de depósito em texto e o 
 gasto, sem ID do Discord ou quantidade de compras.
 
 O comando `/pix valor: cliente:` só pode ser usado pelo usuário Discord de ID
-`38510698452274381` e dentro de um ticket aberto. O cliente informado precisa ser
-o dono do ticket. A cobrança é registrada como Pix confirmado no backend e entra
-no `/rank` e no `/ranking`, com proteção contra duplicidade; ela não adiciona saldo
+`385106984522743819` e dentro de um ticket aberto. O cliente informado precisa ser
+o dono do ticket. A cobrança é publicada como pendente com QR Code e Pix copia e
+cola. Somente o usuário autorizado pode confirmar ou cancelar pelos botões; o
+valor só é registrado no backend e entra no `/rank` e no `/ranking` após a
+confirmação, com proteção contra duplicidade. A cobrança não adiciona saldo
 utilizável na conta do site. O Pix copia e cola pode ser substituído por
 `PIX_COPIA_E_COLA` no ambiente.
 

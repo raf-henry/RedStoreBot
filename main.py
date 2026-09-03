@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal, Sequence
 from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
@@ -48,6 +49,8 @@ LIVE_ANNOUNCEMENT_CHANNEL_ID = 1541592129644535828
 LIVE_NOTIFICATION_ROLE_ID = 1541951746988052511
 TIKTOK_PROFILE_URL = "https://www.tiktok.com/@.redlocker"
 PIX_COMMAND_OWNER_ID = 385106984522743819
+PIX_QR_CODE_PATH = Path(__file__).resolve().parent / "assets" / "pix-qrcode.png"
+PIX_QR_CODE_FILENAME = "pix-qrcode.png"
 DEFAULT_PIX_COPY_PASTE = (
     "00020126580014br.gov.bcb.pix01364fbb06f0-bcde-4abb-a720-9bc50945df2f"
     "5204000053039865802BR5925Henry Rafael Bonfim Cardo6009Sao Paulo62290525"
@@ -827,6 +830,51 @@ class DepositReviewView(discord.ui.View):
         await self.bridge.review_deposit(interaction, self.deposit_id, "reject", self)
 
 
+class PixChargeView(discord.ui.View):
+    def __init__(
+        self,
+        bridge: "DiscordBridge",
+        client_mention: str,
+        discord_id: str,
+        amount: Decimal,
+        ticket_channel_id: str,
+        charged_by_discord_id: str,
+        idempotency_key: str,
+    ) -> None:
+        super().__init__(timeout=None)
+        self.bridge = bridge
+        self.client_mention = client_mention
+        self.discord_id = discord_id
+        self.amount = amount
+        self.ticket_channel_id = ticket_channel_id
+        self.charged_by_discord_id = charged_by_discord_id
+        self.idempotency_key = idempotency_key
+        self.state: Literal["pending", "confirmed", "cancelled"] = "pending"
+
+        confirm = discord.ui.Button(
+            label="Confirmar depósito",
+            style=discord.ButtonStyle.green,
+            emoji="✅",
+            custom_id=f"redstore:pix:confirm:{idempotency_key}",
+        )
+        cancel = discord.ui.Button(
+            label="Cancelar cobrança",
+            style=discord.ButtonStyle.red,
+            emoji="❌",
+            custom_id=f"redstore:pix:cancel:{idempotency_key}",
+        )
+        confirm.callback = self.confirm
+        cancel.callback = self.cancel
+        self.add_item(confirm)
+        self.add_item(cancel)
+
+    async def confirm(self, interaction: discord.Interaction) -> None:
+        await self.bridge.handle_pix_action(interaction, "confirm", self)
+
+    async def cancel(self, interaction: discord.Interaction) -> None:
+        await self.bridge.handle_pix_action(interaction, "cancel", self)
+
+
 class DiscordBridge:
     def __init__(self) -> None:
         intents = discord.Intents.none()
@@ -846,6 +894,7 @@ class DiscordBridge:
         self._ticket_permissions_synchronized = False
         self._proof_number_lock = asyncio.Lock()
         self._deposit_review_in_flight: set[int] = set()
+        self._pix_action_in_flight: set[str] = set()
         self._deposit_role_sync_task: asyncio.Task[None] | None = None
         self._deposit_ranking_role_lock = asyncio.Lock()
         self._application_commands_synced = False
@@ -1047,6 +1096,121 @@ class DiscordBridge:
         if not isinstance(result, dict) or not result.get("transactionCode"):
             raise RuntimeError("A resposta do backend para a cobrança Pix é inválida.")
         return result
+
+    async def handle_pix_action(
+        self,
+        interaction: discord.Interaction,
+        action: Literal["confirm", "cancel"],
+        view: PixChargeView,
+    ) -> None:
+        if interaction.user.id != PIX_COMMAND_OWNER_ID:
+            await interaction.response.send_message(
+                "Apenas o administrador autorizado pode usar estes botões.",
+                ephemeral=True,
+            )
+            return
+        if view.state != "pending":
+            await interaction.response.send_message(
+                "Esta cobrança Pix já foi processada.",
+                ephemeral=True,
+            )
+            return
+        if view.idempotency_key in self._pix_action_in_flight:
+            await interaction.response.send_message(
+                "Esta cobrança já está sendo processada. Aguarde um instante.",
+                ephemeral=True,
+            )
+            return
+
+        self._pix_action_in_flight.add(view.idempotency_key)
+        for child in view.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+        await interaction.response.defer()
+
+        try:
+            if action == "confirm":
+                charge = await self._register_discord_pix_charge(
+                    discord_id=view.discord_id,
+                    amount=view.amount,
+                    ticket_channel_id=view.ticket_channel_id,
+                    charged_by_discord_id=view.charged_by_discord_id,
+                    idempotency_key=view.idempotency_key,
+                )
+                view.state = "confirmed"
+                transaction_code = str(charge.get("transactionCode", "PIX-DISCORD"))
+                already_recorded = bool(charge.get("alreadyRecorded"))
+                status_text = (
+                    "Esta cobrança já estava confirmada; o valor não foi somado novamente."
+                    if already_recorded
+                    else f"Cobrança **{transaction_code}** confirmada e contabilizada no `/ranking`."
+                )
+                title = "✅ Depósito Pix confirmado"
+                color = discord.Color.green()
+                footer = "Depósito confirmado pelo administrador autorizado."
+            else:
+                view.state = "cancelled"
+                status_text = "Cobrança cancelada. Nenhum valor foi adicionado ao `/ranking`."
+                title = "❌ Cobrança Pix cancelada"
+                color = discord.Color.red()
+                footer = "Cobrança cancelada pelo administrador autorizado."
+
+            await self._update_pix_charge_message(
+                interaction,
+                view,
+                title=title,
+                color=color,
+                status_text=status_text,
+                footer=footer,
+            )
+        except (discord.HTTPException, httpx.HTTPError, RuntimeError, ValueError) as exc:
+            view.state = "pending"
+            for child in view.children:
+                if isinstance(child, discord.ui.Button):
+                    child.disabled = False
+            logger.warning(
+                "Não foi possível %s a cobrança Pix %s: %s",
+                "confirmar" if action == "confirm" else "cancelar",
+                view.idempotency_key,
+                exc,
+            )
+            await interaction.followup.send(
+                (
+                    "Não foi possível confirmar o depósito no ranking. "
+                    "Confira a conexão com o RedStore e tente novamente."
+                    if action == "confirm"
+                    else "Não foi possível cancelar esta cobrança. Tente novamente."
+                ),
+                ephemeral=True,
+            )
+        finally:
+            self._pix_action_in_flight.discard(view.idempotency_key)
+
+    async def _update_pix_charge_message(
+        self,
+        interaction: discord.Interaction,
+        view: PixChargeView,
+        *,
+        title: str,
+        color: discord.Color,
+        status_text: str,
+        footer: str,
+    ) -> None:
+        message = interaction.message
+        if message is None:
+            return
+        embed = message.embeds[0] if message.embeds else discord.Embed()
+        embed.title = title
+        embed.description = (
+            f"{view.client_mention}, confira o status desta cobrança Pix abaixo."
+        )
+        embed.color = color
+        if len(embed.fields) >= 3:
+            embed.set_field_at(2, name="Registro", value=status_text, inline=False)
+        else:
+            embed.add_field(name="Registro", value=status_text, inline=False)
+        embed.set_footer(text=footer)
+        await message.edit(embed=embed, view=view)
 
     async def _sync_deposit_roles_on_bot_loop(
         self,
@@ -1814,7 +1978,7 @@ class DiscordBridge:
 
             @self.bot.slash_command(
                 name="pix",
-                description="Cobra um Pix no ticket e contabiliza o valor no ranking",
+                description="Cobra um Pix no ticket e aguarda confirmação para o ranking",
                 guild_ids=command_guild_ids,
             )
             async def pix(
@@ -1876,31 +2040,9 @@ class DiscordBridge:
                     )
                     return
 
-                await ctx.defer()
-                try:
-                    charge = await self._register_discord_pix_charge(
-                        discord_id=str(cliente.id),
-                        amount=amount,
-                        ticket_channel_id=str(ctx.channel.id),
-                        charged_by_discord_id=str(ctx.author.id),
-                        idempotency_key=f"discord-pix-{interaction_id}",
-                    )
-                except (httpx.HTTPError, RuntimeError, ValueError) as exc:
-                    logger.warning(
-                        "Não foi possível registrar cobrança Pix no ticket %s: %s",
-                        ctx.channel.id,
-                        exc,
-                    )
-                    await ctx.followup.send(
-                        "Não foi possível registrar esta cobrança no ranking. "
-                        "Confira a conexão com o RedStore e tente novamente.",
-                        ephemeral=True,
-                    )
-                    return
-
-                already_recorded = bool(charge.get("alreadyRecorded"))
+                idempotency_key = f"discord-pix-{interaction_id}"
                 embed = discord.Embed(
-                    title="💸 Cobrança via Pix" if not already_recorded else "💸 Pix já registrado",
+                    title="💸 Cobrança via Pix — aguardando confirmação",
                     description=(
                         f"{cliente.mention}, faça o Pix usando os dados abaixo e envie o comprovante neste ticket."
                     ),
@@ -1918,19 +2060,34 @@ class DiscordBridge:
                 )
                 embed.add_field(
                     name="Registro",
-                    value=(
-                        f"Cobrança **{charge.get('transactionCode', 'PIX-DISCORD')}** registrada e contabilizada no `/ranking`."
-                        if not already_recorded
-                        else "Esta interação já havia sido registrada; o valor não foi somado novamente."
-                    ),
+                    value="⏳ Aguardando o administrador confirmar que o depósito foi feito.",
                     inline=False,
                 )
-                embed.set_footer(text="Após o pagamento, envie o comprovante neste ticket.")
-                await ctx.followup.send(
-                    content=cliente.mention,
-                    embed=embed,
-                    allowed_mentions=discord.AllowedMentions(users=[cliente]),
-                )
+                embed.set_footer(text="Após o pagamento, confirme o depósito ou cancele a cobrança.")
+                followup_kwargs: dict[str, Any] = {
+                    "content": cliente.mention,
+                    "embed": embed,
+                    "allowed_mentions": discord.AllowedMentions(users=[cliente]),
+                    "view": PixChargeView(
+                        self,
+                        client_mention=cliente.mention,
+                        discord_id=str(cliente.id),
+                        amount=amount,
+                        ticket_channel_id=str(ctx.channel.id),
+                        charged_by_discord_id=str(ctx.author.id),
+                        idempotency_key=idempotency_key,
+                    ),
+                }
+                if PIX_QR_CODE_PATH.is_file():
+                    pix_qr_file = discord.File(
+                        PIX_QR_CODE_PATH,
+                        filename=PIX_QR_CODE_FILENAME,
+                    )
+                    embed.set_image(url=f"attachment://{PIX_QR_CODE_FILENAME}")
+                    followup_kwargs["file"] = pix_qr_file
+                else:
+                    logger.warning("QR Code do Pix não encontrado em %s", PIX_QR_CODE_PATH)
+                await ctx.respond(**followup_kwargs)
 
         @self.bot.slash_command(
             name="prova",

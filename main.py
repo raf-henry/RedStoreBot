@@ -1709,7 +1709,7 @@ class DiscordBridge:
                 )
                 return
             roles = ", ".join(role.name for role in ctx.author.roles if role.name != "@everyone") or "nenhum"
-                await ctx.respond(f"Sua conta está vinculada ao RedBuxx. Cargos: {roles}", ephemeral=True)
+            await ctx.respond(f"Sua conta está vinculada ao RedBuxx. Cargos: {roles}", ephemeral=True)
 
         @self.bot.slash_command(
             name="rank",

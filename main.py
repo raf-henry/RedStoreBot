@@ -849,6 +849,7 @@ class PixChargeView(discord.ui.View):
         self.ticket_channel_id = ticket_channel_id
         self.charged_by_discord_id = charged_by_discord_id
         self.idempotency_key = idempotency_key
+        self.pix_copy_message: discord.Message | None = None
         self.state: Literal["pending", "confirmed", "cancelled"] = "pending"
 
         confirm = discord.ui.Button(
@@ -1223,6 +1224,13 @@ class DiscordBridge:
             edit_kwargs["content"] = f"{view.client_mention} ✅ Pix confirmado!"
             edit_kwargs["attachments"] = []
         await message.edit(**edit_kwargs)
+        if remove_pix_details and view.pix_copy_message is not None:
+            try:
+                await view.pix_copy_message.delete()
+            except discord.NotFound:
+                pass
+            except discord.HTTPException as exc:
+                logger.warning("Não foi possível remover a mensagem do Pix copia e cola: %s", exc)
 
     async def _sync_deposit_roles_on_bot_loop(
         self,
@@ -2066,29 +2074,25 @@ class DiscordBridge:
                     inline=False,
                 )
                 embed.add_field(
-                    name="Pix copia e cola",
-                    value=f"`{settings.pix_copy_paste}`",
-                    inline=False,
-                )
-                embed.add_field(
                     name="Registro",
                     value="⏳ Aguardando o administrador confirmar que o depósito foi feito.",
                     inline=False,
                 )
                 embed.set_footer(text="Após o pagamento, confirme o depósito ou cancele a cobrança.")
+                pix_view = PixChargeView(
+                    self,
+                    client_mention=cliente.mention,
+                    discord_id=str(cliente.id),
+                    amount=amount,
+                    ticket_channel_id=str(ctx.channel.id),
+                    charged_by_discord_id=str(ctx.author.id),
+                    idempotency_key=idempotency_key,
+                )
                 followup_kwargs: dict[str, Any] = {
                     "content": cliente.mention,
                     "embed": embed,
                     "allowed_mentions": discord.AllowedMentions(users=[cliente]),
-                    "view": PixChargeView(
-                        self,
-                        client_mention=cliente.mention,
-                        discord_id=str(cliente.id),
-                        amount=amount,
-                        ticket_channel_id=str(ctx.channel.id),
-                        charged_by_discord_id=str(ctx.author.id),
-                        idempotency_key=idempotency_key,
-                    ),
+                    "view": pix_view,
                 }
                 if PIX_QR_CODE_PATH.is_file():
                     pix_qr_file = discord.File(
@@ -2100,6 +2104,13 @@ class DiscordBridge:
                 else:
                     logger.warning("QR Code do Pix não encontrado em %s", PIX_QR_CODE_PATH)
                 await ctx.respond(**followup_kwargs)
+                try:
+                    pix_view.pix_copy_message = await ctx.channel.send(
+                        "📋 **Pix copia e cola**\n"
+                        f"```{settings.pix_copy_paste}```"
+                    )
+                except discord.HTTPException as exc:
+                    logger.warning("Não foi possível enviar o Pix copia e cola separado: %s", exc)
 
         @self.bot.slash_command(
             name="prova",

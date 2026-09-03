@@ -2106,7 +2106,6 @@ class DiscordBridge:
                 await ctx.respond(**followup_kwargs)
                 try:
                     pix_view.pix_copy_message = await ctx.channel.send(
-                        "📋 **Pix copia e cola**\n"
                         f"```{settings.pix_copy_paste}```"
                     )
                 except discord.HTTPException as exc:

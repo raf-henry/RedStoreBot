@@ -75,9 +75,11 @@ O comando `/pix valor: cliente:` só pode ser usado pelo usuário Discord de ID
 o dono do ticket. A cobrança é publicada como pendente com QR Code e Pix copia e
 cola. Somente o usuário autorizado pode confirmar ou cancelar pelos botões; o
 valor só é registrado no backend e entra no `/rank` e no `/ranking` após a
-confirmação, com proteção contra duplicidade. A cobrança não adiciona saldo
-utilizável na conta do site. O Pix copia e cola pode ser substituído por
-`PIX_COPIA_E_COLA` no ambiente.
+confirmação, com proteção contra duplicidade. Após a confirmação, o cargo do
+cliente é atualizado automaticamente; o `/rank` também consulta o total atual e
+corrige o cargo sempre que for executado. A cobrança não adiciona saldo utilizável
+na conta do site. O Pix copia e cola pode ser substituído por `PIX_COPIA_E_COLA`
+no ambiente.
 
 | Cargo | A partir de | ID |
 | --- | ---: | --- |

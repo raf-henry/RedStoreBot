@@ -1146,6 +1146,41 @@ class DiscordBridge:
                     if already_recorded
                     else f"Cobrança **{transaction_code}** confirmada e contabilizada no `/ranking`."
                 )
+
+                # O registro do Pix e a sincronização do cargo são operações
+                # independentes. Se o Discord estiver indisponível, a cobrança
+                # continua confirmada e será reconciliada pelo loop periódico.
+                try:
+                    role_result = await asyncio.wait_for(
+                        self._sync_deposit_roles_on_bot_loop(view.discord_id),
+                        timeout=20,
+                    )
+                except (
+                    asyncio.TimeoutError,
+                    discord.HTTPException,
+                    httpx.HTTPError,
+                    HTTPException,
+                    RuntimeError,
+                    ValueError,
+                ) as exc:
+                    logger.warning(
+                        "Cobrança Pix %s confirmada, mas não foi possível sincronizar o cargo de %s: %s",
+                        view.idempotency_key,
+                        view.discord_id,
+                        exc,
+                    )
+                    status_text += (
+                        " O depósito foi registrado, mas o cargo não pôde ser atualizado agora; "
+                        "use `/rank` para tentar novamente."
+                    )
+                elif role_result.get("is_member"):
+                    synced_tier = role_result.get("tier") or "Sem cargo"
+                    status_text += f" Cargo atualizado automaticamente: **{synced_tier}**."
+                else:
+                    status_text += (
+                        " O depósito foi registrado, mas o cliente não está no servidor para receber o cargo."
+                    )
+
                 title = "✅ Depósito Pix confirmado"
                 color = discord.Color.green()
                 footer = "Depósito confirmado pelo administrador autorizado."

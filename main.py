@@ -2148,7 +2148,7 @@ class DiscordBridge:
                 await ctx.respond(**followup_kwargs)
                 try:
                     pix_view.pix_copy_message = await ctx.channel.send(
-                        f"```{settings.pix_copy_paste}```"
+                        settings.pix_copy_paste
                     )
                 except discord.HTTPException as exc:
                     logger.warning("Não foi possível enviar o Pix copia e cola separado: %s", exc)

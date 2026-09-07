@@ -47,6 +47,9 @@ PUBLIC_SITE_HOSTS = {"redbuxx.com.br", "www.redbuxx.com.br"}
 LIVE_COMMAND_OWNER_ID = 385106984522743819
 LIVE_ANNOUNCEMENT_CHANNEL_ID = 1541592129644535828
 LIVE_NOTIFICATION_ROLE_ID = 1541951746988052511
+NOTIFICATION_ROLES_CHANNEL_ID = 1546552802166177913
+STOCK_NOTIFICATION_ROLE_ID = 1546552551447470241
+NOTIFICATION_ROLES_PANEL_FOOTER = "RedBuxx • painel de notificações"
 TIKTOK_PROFILE_URL = "https://www.tiktok.com/@.redlocker"
 PIX_COMMAND_OWNER_ID = 385106984522743819
 PIX_QR_CODE_PATH = Path(__file__).resolve().parent / "assets" / "pix-qrcode.png"
@@ -789,6 +792,46 @@ class TicketView(discord.ui.View):
         await self.bridge.close_ticket(interaction)
 
 
+class NotificationRolesView(discord.ui.View):
+    def __init__(self, bridge: "DiscordBridge") -> None:
+        super().__init__(timeout=None)
+        self.bridge = bridge
+
+    @discord.ui.button(
+        label="Not.Live",
+        style=discord.ButtonStyle.blurple,
+        emoji="🔴",
+        custom_id="redstore:notification_roles:live",
+    )
+    async def toggle_live(
+        self,
+        button: discord.ui.Button,
+        interaction: discord.Interaction,
+    ) -> None:
+        await self.bridge.toggle_notification_role(
+            interaction,
+            LIVE_NOTIFICATION_ROLE_ID,
+            "Not.Live",
+        )
+
+    @discord.ui.button(
+        label="Not.Stock",
+        style=discord.ButtonStyle.green,
+        emoji="💰",
+        custom_id="redstore:notification_roles:stock",
+    )
+    async def toggle_stock(
+        self,
+        button: discord.ui.Button,
+        interaction: discord.Interaction,
+    ) -> None:
+        await self.bridge.toggle_notification_role(
+            interaction,
+            STOCK_NOTIFICATION_ROLE_ID,
+            "Not.Stock",
+        )
+
+
 class TicketRenameModal(discord.ui.Modal):
     def __init__(self, bridge: "DiscordBridge") -> None:
         super().__init__(title="Renomear ticket")
@@ -893,6 +936,8 @@ class DiscordBridge:
         self._ticket_views_registered = False
         self._legacy_ticket_topics_migrated = False
         self._ticket_permissions_synchronized = False
+        self._notification_roles_view_registered = False
+        self._notification_roles_panel_initialized = False
         self._proof_number_lock = asyncio.Lock()
         self._deposit_review_in_flight: set[int] = set()
         self._pix_action_in_flight: set[str] = set()
@@ -1272,6 +1317,118 @@ class DiscordBridge:
             except discord.HTTPException as exc:
                 logger.warning("Não foi possível remover a mensagem do Pix copia e cola: %s", exc)
 
+    async def toggle_notification_role(
+        self,
+        interaction: discord.Interaction,
+        role_id: int,
+        role_name: str,
+    ) -> None:
+        if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message(
+                "Essa opção só pode ser usada dentro do servidor.",
+                ephemeral=True,
+            )
+            return
+        if interaction.channel_id != NOTIFICATION_ROLES_CHANNEL_ID:
+            await interaction.response.send_message(
+                "Essa opção não está disponível neste canal.",
+                ephemeral=True,
+            )
+            return
+
+        role = interaction.guild.get_role(role_id)
+        if role is None:
+            await interaction.response.send_message(
+                f"O cargo {role_name} não foi encontrado no servidor.",
+                ephemeral=True,
+            )
+            return
+        if role.managed or not interaction.guild.me or role >= interaction.guild.me.top_role:
+            await interaction.response.send_message(
+                f"O bot não pode gerenciar o cargo {role_name}.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            if role in interaction.user.roles:
+                await interaction.user.remove_roles(
+                    role,
+                    reason=f"Remoção voluntária do cargo {role_name}",
+                )
+                result = "removido"
+                next_action = "receber novamente"
+            else:
+                await interaction.user.add_roles(
+                    role,
+                    reason=f"Adesão voluntária ao cargo {role_name}",
+                )
+                result = "adicionado"
+                next_action = "remover"
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "O Discord recusou a alteração do cargo. Verifique as permissões do bot.",
+                ephemeral=True,
+            )
+            return
+        except discord.HTTPException:
+            await interaction.response.send_message(
+                "Não foi possível alterar seu cargo agora. Tente novamente em instantes.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.send_message(
+            f"✅ Cargo **{role_name}** {result}. Clique novamente para {next_action} as notificações.",
+            ephemeral=True,
+        )
+
+    async def _ensure_notification_roles_panel(self) -> bool:
+        channel = self.bot.get_channel(NOTIFICATION_ROLES_CHANNEL_ID)
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(NOTIFICATION_ROLES_CHANNEL_ID)
+            except discord.HTTPException:
+                logger.exception(
+                    "Não foi possível encontrar o canal de notificações %s",
+                    NOTIFICATION_ROLES_CHANNEL_ID,
+                )
+                return False
+        if not isinstance(channel, discord.TextChannel):
+            logger.warning(
+                "O canal de notificações %s não é um canal de texto",
+                NOTIFICATION_ROLES_CHANNEL_ID,
+            )
+            return False
+
+        embed = discord.Embed(
+            title="🔔 Escolha suas notificações",
+            description=(
+                "Escolha quais avisos você quer receber no servidor.\n\n"
+                "🔴 **Not.Live** — recebe notificações quando a RedBuxx iniciar uma live no TikTok.\n\n"
+                "💰 **Not.Stock** — recebe notificações quando o stock de Robux da loja for atualizado "
+                "ou houver disponibilidade.\n\n"
+                "Clique nos botões abaixo para ativar ou remover cada cargo. Você pode escolher um, os dois "
+                "ou nenhum."
+            ),
+            color=discord.Color.blurple(),
+        )
+        embed.set_footer(text=NOTIFICATION_ROLES_PANEL_FOOTER)
+
+        bot_user_id = self.bot.user.id if self.bot.user else 0
+        async for message in channel.history(limit=100):
+            if message.author.id != bot_user_id:
+                continue
+            if any(
+                embed_item.footer.text == NOTIFICATION_ROLES_PANEL_FOOTER
+                for embed_item in message.embeds
+            ):
+                await message.edit(embed=embed, view=NotificationRolesView(self))
+                return True
+
+        await channel.send(embed=embed, view=NotificationRolesView(self))
+        return True
+
     async def _sync_deposit_roles_on_bot_loop(
         self,
         discord_id: str,
@@ -1640,6 +1797,19 @@ class DiscordBridge:
                 self.bot.add_view(TicketPanelView(self))
                 self.bot.add_view(TicketView(self))
                 self._ticket_views_registered = True
+            if not self._notification_roles_view_registered:
+                self.bot.add_view(NotificationRolesView(self))
+                self._notification_roles_view_registered = True
+            if not self._notification_roles_panel_initialized:
+                try:
+                    panel_initialized = await self._ensure_notification_roles_panel()
+                except (discord.Forbidden, discord.HTTPException):
+                    logger.exception(
+                        "Não foi possível criar ou atualizar o painel de notificações no canal %s",
+                        NOTIFICATION_ROLES_CHANNEL_ID,
+                    )
+                else:
+                    self._notification_roles_panel_initialized = panel_initialized
             if settings.ticket_enabled and not self._legacy_ticket_topics_migrated:
                 await self._migrate_legacy_ticket_topics()
                 self._legacy_ticket_topics_migrated = True

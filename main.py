@@ -1405,7 +1405,7 @@ class DiscordBridge:
             title="🔔 Escolha suas notificações",
             description=(
                 "Escolha quais avisos você quer receber no servidor.\n\n"
-                "🔴 **Not.Live** — recebe notificações quando a RedBuxx iniciar uma live no TikTok.\n\n"
+                "🔴 **Not.Live** — recebe notificações quando o Red iniciar uma live no TikTok.\n\n"
                 "💰 **Not.Stock** — recebe notificações quando o stock de Robux da loja for atualizado "
                 "ou houver disponibilidade.\n\n"
                 "Clique nos botões abaixo para ativar ou remover cada cargo. Você pode escolher um, os dois "
